@@ -1,0 +1,30 @@
+{
+  "list_paged": {
+    "items": [
+      {
+        "id": 36166,
+        "name": "printer HP",
+        "code": "HP",
+        "price_currency": "EUR",
+        "sales_price": 170,
+        "unit": "tk"
+      }
+    ],
+    "current_page": 1,
+    "total_pages": 3
+  },
+  "single": {
+    "id": 36166,
+    "name": "printer HP",
+    "code": "HP",
+    "price_currency": "EUR",
+    "sales_price": 170,
+    "unit": "tk",
+    "cl_sale_articles_id": 1,
+    "sale_accounts_id": 3100
+  },
+  "api_ok": {
+    "response_code": 0,
+    "id": 36166
+  }
+}

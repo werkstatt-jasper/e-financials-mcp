@@ -1,0 +1,37 @@
+{
+  "list_paginated": {
+    "items": [{ "id": 1, "name": "Acme" }],
+    "current_page": 3,
+    "total_pages": 10
+  },
+  "search_two_clients": {
+    "items": [
+      { "id": 1, "name": "Alpha OÜ", "reg_code": null, "email": "a@example.com" },
+      { "id": 2, "name": "Beta LLC", "reg_code": "123456", "email": null }
+    ]
+  },
+  "empty_object": {},
+  "created_client": { "id": 55 },
+  "supplier_list_match": {
+    "items": [{ "id": 1, "name": "Acme Office Supplies" }, { "id": 2, "name": "Unrelated Oy" }]
+  },
+  "suppliers_only": { "items": [{ "id": 3, "name": "OnlySupplier" }] },
+  "client_by_id": {
+    "id": 7,
+    "name": "One Client",
+    "reg_code": "111",
+    "vat_no": null,
+    "email": null,
+    "phone": null,
+    "address": null,
+    "city": null,
+    "postal_code": null,
+    "country_code": "EE",
+    "is_buyer": false,
+    "is_supplier": true,
+    "is_active": true,
+    "bank_account": null,
+    "bank_name": null,
+    "payment_term_days": 14
+  }
+}

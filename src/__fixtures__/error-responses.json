@@ -1,0 +1,21 @@
+{
+  "http_401_body": {
+    "response_code": 401,
+    "response_message": "Unauthorized"
+  },
+  "http_409_body": {
+    "response_code": 409,
+    "response_message": "Conflict"
+  },
+  "http_error_field_body": { "error": "custom error string" },
+  "http_empty_json_body": {},
+  "http_code_field_body": { "code": 418, "detail": "nope" },
+  "http_400_message_body": { "message": "Bad request" },
+  "http_422_errors_body": { "errors": ["a", "b"] },
+  "api_business_error_body": {
+    "response_code": 7,
+    "response_message": "Business rule failed"
+  },
+  "api_success_with_items": { "response_code": 0, "items": [] },
+  "items_numeric": { "items": [1, 2] }
+}

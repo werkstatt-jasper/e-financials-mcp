@@ -1,0 +1,50 @@
+{
+  "list_paged": {
+    "items": [
+      {
+        "id": 739,
+        "title": "Sample journal",
+        "effective_date": "2014-05-31",
+        "registered": true,
+        "postings": []
+      }
+    ],
+    "current_page": 1,
+    "total_pages": 2
+  },
+  "single": {
+    "id": 739,
+    "title": "Sample journal",
+    "effective_date": "2014-05-31",
+    "registered": false,
+    "cl_currencies_id": "EUR",
+    "currency_rate": 1,
+    "postings": [
+      {
+        "journals_id": 739,
+        "accounts_id": 2511,
+        "amount": 100,
+        "type": "D",
+        "cl_currencies_id": "EUR"
+      },
+      {
+        "journals_id": 739,
+        "accounts_id": 2510,
+        "amount": 100,
+        "type": "C",
+        "cl_currencies_id": "EUR"
+      }
+    ]
+  },
+  "api_ok": {
+    "response_code": 0,
+    "id": 740
+  },
+  "upload_put_ok": {
+    "response_code": 0
+  },
+  "api_file": {
+    "name": "attachment.pdf",
+    "contents": "JVBERi0xLjQK"
+  }
+}

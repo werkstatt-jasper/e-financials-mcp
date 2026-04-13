@@ -1,0 +1,100 @@
+{
+  "list_paginated": {
+    "items": [{ "id": 1, "amount": 10 }],
+    "current_page": 2,
+    "total_pages": 5
+  },
+  "list_empty": { "items": [] },
+  "single": { "id": 42, "description": "Wire" },
+  "patch_result": { "id": 7 },
+  "pagination_page_1": {
+    "items": [{ "id": "a" }],
+    "current_page": 1,
+    "total_pages": 3
+  },
+  "pagination_page_2": {
+    "items": [{ "id": "b" }],
+    "current_page": 2,
+    "total_pages": 3
+  },
+  "pagination_page_3": {
+    "items": [{ "id": "c" }],
+    "current_page": 3,
+    "total_pages": 3
+  },
+  "single_page_list": {
+    "items": [{ "x": 1 }],
+    "current_page": 1,
+    "total_pages": 1
+  },
+  "paged_no_items_key": { "current_page": 1, "total_pages": 1 },
+  "paged_empty_items": {
+    "items": [],
+    "current_page": 1,
+    "total_pages": 1
+  },
+  "reconciliation_list": {
+    "items": [
+      {
+        "id": 1,
+        "type": "C",
+        "amount": 100,
+        "status": "PROJECT",
+        "clients_id": null,
+        "date": "2025-06-01",
+        "description": "In"
+      }
+    ]
+  },
+  "http_ok_empty": {},
+  "http_post_created": { "id": 1 },
+  "http_ok_flag": { "ok": true },
+  "unprocessed_mixed": {
+    "items": [
+      {
+        "id": 1,
+        "clients_id": null,
+        "status": "PROJECT",
+        "type": "C",
+        "amount": 1,
+        "description": "a"
+      },
+      {
+        "id": 2,
+        "clients_id": 5,
+        "status": "PROJECT",
+        "type": "D",
+        "amount": 2,
+        "description": "b"
+      }
+    ]
+  },
+  "txn_for_match": { "id": 99, "description": "payment acme office" },
+  "summary_txns": {
+    "items": [
+      {
+        "id": 1,
+        "type": "C",
+        "amount": 100,
+        "status": "CONFIRMED",
+        "clients_id": 1,
+        "date": "2025-06-05"
+      },
+      {
+        "id": 2,
+        "type": "D",
+        "amount": 40,
+        "status": "PROJECT",
+        "clients_id": null,
+        "date": "2025-06-06"
+      }
+    ]
+  },
+  "upload_put_ok": {
+    "response_code": 0
+  },
+  "api_file": {
+    "name": "attachment.pdf",
+    "contents": "JVBERi0xLjQK"
+  }
+}

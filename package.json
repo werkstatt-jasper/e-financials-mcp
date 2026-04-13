@@ -1,0 +1,59 @@
+{
+  "name": "@werkstatt/e-financials-mcp",
+  "version": "1.0.0",
+  "description": "Open-source MCP server for the Estonian RIK e-Financials accounting API",
+  "main": "dist/index.js",
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js",
+    "./client": "./dist/client.js",
+    "./auth": "./dist/auth.js",
+    "./server-setup": "./dist/server-setup.js",
+    "./tools/*": "./dist/tools/*.js",
+    "./logger": "./dist/logger.js",
+    "./api-error": "./dist/api-error.js",
+    "./rik-base-url": "./dist/rik-base-url.js",
+    "./rik-credential-parse": "./dist/rik-credential-parse.js",
+    "./upload-file-path": "./dist/upload-file-path.js",
+    "./types/*": "./dist/types/*.js",
+    "./validation/*": "./dist/validation/*.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch",
+    "lint": "biome check src/ vitest.config.ts",
+    "lint:fix": "biome check --write src/ vitest.config.ts",
+    "format": "biome format --write src/ vitest.config.ts",
+    "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/werkstatt/e-financials-mcp.git"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "e-financials",
+    "rik",
+    "accounting",
+    "estonia"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "dotenv": "^16.4.5",
+    "pino": "^10.3.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.9",
+    "@types/node": "^20.11.0",
+    "@vitest/coverage-v8": "^4.1.1",
+    "typescript": "^5.3.0",
+    "vitest": "^4.1.1"
+  }
+}

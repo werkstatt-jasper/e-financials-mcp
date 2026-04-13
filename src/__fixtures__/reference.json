@@ -1,0 +1,36 @@
+{
+  "currencies": [
+    {
+      "id": "EUR",
+      "name_est": "Euro",
+      "name_eng": "Euro"
+    },
+    {
+      "id": "GBP",
+      "name_est": "Suurbritannia naelsterling",
+      "name_eng": "Pound Sterling"
+    }
+  ],
+  "sale_articles": [
+    {
+      "id": 34,
+      "group_est": "Pandipakendid",
+      "group_eng": "Pledge packages",
+      "name_est": "Pandipakendid",
+      "name_eng": "Pledge packages",
+      "accounts_id": 1615,
+      "vat_type": 0,
+      "is_valid": true,
+      "cl_account_groups": ["AR", "MTY", "SA"]
+    }
+  ],
+  "templates": [
+    {
+      "id": 89,
+      "name": "Default template",
+      "is_default": false,
+      "cl_languages_id": "et",
+      "cl_account_groups": "ET"
+    }
+  ]
+}

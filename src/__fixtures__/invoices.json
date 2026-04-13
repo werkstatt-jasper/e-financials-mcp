@@ -1,0 +1,160 @@
+{
+  "sales_list_paginated": {
+    "items": [{ "id": 1, "invoice_no": "S1" }],
+    "current_page": 1,
+    "total_pages": 1
+  },
+  "sales_empty_response": {},
+  "created_sales_invoice": { "id": 200 },
+  "sale_invoice_get_for_patch": {
+    "sale_invoice_type": "STANDARD",
+    "cl_templates_id": 1,
+    "clients_id": 5,
+    "cl_countries_id": 1,
+    "number_suffix": "",
+    "create_date": "2025-01-01",
+    "journal_date": "2025-01-01",
+    "term_days": 14,
+    "cl_currencies_id": "EUR",
+    "show_client_balance": false,
+    "notes": "Old",
+    "items": [{ "description": "Old row", "quantity": 1, "unit_price": 10 }]
+  },
+  "patch_invoice_result": { "id": 88 },
+  "upload_put_ok": { "ok": true },
+  "reconciliation_sales_list": {
+    "items": [
+      {
+        "id": 10,
+        "payment_status": "NOT_PAID",
+        "total_amount": 50,
+        "invoice_no": "S1",
+        "client_name": "C",
+        "due_date": "2025-07-01"
+      }
+    ]
+  },
+  "reconciliation_purchase_list": {
+    "items": [
+      {
+        "id": 20,
+        "payment_status": "PAID",
+        "total_amount": 30,
+        "invoice_no": "P1",
+        "supplier_name": "S",
+        "due_date": "2025-07-01"
+      }
+    ]
+  },
+  "reconciliation_purchase_unpaid": {
+    "items": [
+      {
+        "id": 21,
+        "payment_status": "NOT_PAID",
+        "total_amount": 77,
+        "invoice_no": "P2",
+        "supplier_name": "Due Sup",
+        "due_date": "2025-08-01"
+      }
+    ]
+  },
+  "purchases_list_paginated": {
+    "items": [{ "id": 3, "invoice_no": "PUR1" }],
+    "current_page": 1,
+    "total_pages": 1
+  },
+  "single_sales_detail": {
+    "id": 9,
+    "invoice_no": "S9",
+    "clients_id": 1,
+    "client_name": "C",
+    "invoice_date": "2025-01-01",
+    "due_date": "2025-02-01",
+    "total_amount": 10,
+    "vat_amount": 0,
+    "cl_currencies_id": "EUR",
+    "status": "PROJECT",
+    "payment_status": "NOT_PAID",
+    "rows": []
+  },
+  "single_purchase_detail": {
+    "id": 11,
+    "invoice_no": "P11",
+    "clients_id": 1,
+    "supplier_name": "Sup",
+    "invoice_date": "2025-06-15",
+    "due_date": "2025-07-01",
+    "total_amount": 200,
+    "vat_amount": 0,
+    "cl_currencies_id": "EUR",
+    "status": "PROJECT",
+    "payment_status": "NOT_PAID"
+  },
+  "created_purchase_invoice": { "id": 301 },
+  "purchase_get_for_patch": {
+    "clients_id": 1,
+    "client_name": "Sup",
+    "number": "P11",
+    "create_date": "2025-06-01",
+    "journal_date": "2025-06-01",
+    "term_days": 0,
+    "cl_currencies_id": "EUR",
+    "gross_price": 100,
+    "vat_price": 0,
+    "notes": "n",
+    "items": []
+  },
+  "patch_purchase_result": { "id": 11 },
+  "purchase_get_minimal": {
+    "clients_id": 1,
+    "client_name": "Sup",
+    "number": "P11",
+    "create_date": "2025-06-01",
+    "journal_date": "2025-06-01",
+    "cl_currencies_id": "EUR",
+    "gross_price": 100,
+    "notes": "n",
+    "items": []
+  },
+  "unpaid_sales_only": {
+    "items": [
+      {
+        "id": 1,
+        "payment_status": "NOT_PAID",
+        "total_amount": 1,
+        "invoice_no": "S",
+        "clients_id": 1,
+        "client_name": "C",
+        "invoice_date": "2025-01-01",
+        "due_date": "2025-02-01",
+        "vat_amount": 0,
+        "cl_currencies_id": "EUR",
+        "status": "PROJECT"
+      }
+    ]
+  },
+  "unpaid_purchases_only": {
+    "items": [
+      {
+        "id": 2,
+        "payment_status": "NOT_PAID",
+        "total_amount": 2,
+        "invoice_no": "P",
+        "clients_id": 1,
+        "supplier_name": "S",
+        "invoice_date": "2025-01-01",
+        "due_date": "2025-02-01",
+        "vat_amount": 0,
+        "cl_currencies_id": "EUR",
+        "status": "PROJECT"
+      }
+    ]
+  },
+  "summary_sales": { "items": [{ "total_amount": 50, "invoice_date": "2025-06-10" }] },
+  "summary_purchases": {
+    "items": [
+      { "total_amount": 10, "invoice_date": "2025-06-05" },
+      { "total_amount": 999, "invoice_date": "2024-01-01" }
+    ]
+  }
+}

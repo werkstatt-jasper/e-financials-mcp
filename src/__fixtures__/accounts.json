@@ -1,0 +1,37 @@
+{
+  "list_one_account": {
+    "items": [{ "id": 100, "name_est": "Kassa", "name_eng": "Cash" }]
+  },
+  "list_empty": { "items": [] },
+  "dimensions_two": {
+    "items": [
+      { "id": 1, "accounts_id": 1820, "title_est": "A", "title_eng": "A" },
+      { "id": 2, "accounts_id": 9999, "title_est": "B", "title_eng": "B" }
+    ]
+  },
+  "dimensions_one": {
+    "items": [{ "id": 1, "accounts_id": 1, "title_est": "X", "title_eng": "X" }]
+  },
+  "search_two_accounts": {
+    "items": [
+      { "id": 6010, "name_est": "Teenused", "name_eng": "Services" },
+      { "id": 999, "name_est": "Other", "name_eng": "Other" }
+    ]
+  },
+  "chart_raw_array": [{ "id": 7, "name_est": "Arr", "name_eng": "Arr" }],
+  "vat_info": { "vat_number": "EE123", "tax_refnumber": "REF1" },
+  "projects_list": { "items": [{ "id": 1, "name": "P1", "code": "C1", "is_active": true }] },
+  "purchase_articles_list": {
+    "items": [
+      {
+        "id": 39,
+        "level": 1,
+        "name_est": "Office",
+        "name_eng": "Office",
+        "accounts_id": 1,
+        "priority": 1,
+        "cl_account_groups": []
+      }
+    ]
+  }
+}
