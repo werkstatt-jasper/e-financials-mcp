@@ -5,7 +5,7 @@ Open-source MCP server for the [Estonian RIK e-Financials](https://abiinfo.rik.e
 ## Quick start
 
 ```bash
-git clone https://github.com/werkstatt/e-financials-mcp.git
+git clone https://github.com/werkstatt-jasper/e-financials-mcp.git
 cd e-financials-mcp
 cp .env.example .env
 # Fill in your RIK API credentials in .env
