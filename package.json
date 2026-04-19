@@ -4,6 +4,9 @@
   "description": "Open-source MCP server for the Estonian RIK e-Financials accounting API",
   "main": "dist/index.js",
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "exports": {
     ".": "./dist/index.js",
     "./client": "./dist/client.js",

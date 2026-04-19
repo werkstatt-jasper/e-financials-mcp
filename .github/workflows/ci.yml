@@ -10,8 +10,10 @@ jobs:
   lint-test-build:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        node-version: [18, 20, 22]
+        # Vitest 4 / Rolldown require Node 20+ (util.styleText). Aligns with GitLab (node:20-bookworm).
+        node-version: [20, 22]
     steps:
       - uses: actions/checkout@v4
 

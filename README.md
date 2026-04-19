@@ -16,7 +16,7 @@ npm start
 
 ## Prerequisites
 
-- **Node.js 18+** (for native `fetch`).
+- **Node.js 20+** (see `package.json` `engines`; native `fetch`; Vitest 4 / CI require Node 20+).
 - An **e-Financials API key** for your company.
 
 ### API keys
@@ -258,10 +258,7 @@ npm run test:integration # live integration tests
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/my-change`)
-3. Run `npm run lint:fix && npm run test:coverage` before committing
-4. Open a pull request
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** for **main** as default branch, HTTPS clone, branch naming, **`gh pr create`**, and avoiding empty PRs.
 
 ## License
 
