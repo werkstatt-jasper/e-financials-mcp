@@ -637,6 +637,22 @@ describe("invoice tools", () => {
     expect(body.items[1]).toMatchObject({ custom_title: "Line B", reversed_vat_id: 7 });
   });
 
+  it("update_purchase_invoice falls back to empty items when current has none", async () => {
+    const { items: _discardedItems, ...currentWithoutItems } =
+      invoicesFixture.purchase_get_for_patch;
+    vi.mocked(client.get).mockResolvedValueOnce(currentWithoutItems as never);
+    vi.mocked(client.patch).mockResolvedValue({
+      ...invoicesFixture.patch_purchase_result,
+    } as never);
+
+    await tools.update_purchase_invoice.handler({ id: 11, reversed_vat_id: 7 });
+
+    const body = vi.mocked(client.patch).mock.calls[0][1] as {
+      items: Array<Record<string, unknown>>;
+    };
+    expect(body.items).toEqual([]);
+  });
+
   it("update_purchase_invoice leaves items untouched when reversed_vat_id omitted", async () => {
     const originalItems = [{ custom_title: "Line A", unit_net_price: 10 }];
     vi.mocked(client.get).mockResolvedValueOnce({
