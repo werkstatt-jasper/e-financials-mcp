@@ -90,6 +90,7 @@ const createPurchaseInvoiceSchema = z.object({
   purchase_accounts_dimensions_id: optionalPositiveInt,
   vat_rate: optionalNumber,
   vat_accounts_id: optionalPositiveInt,
+  reversed_vat_id: optionalPositiveInt,
 });
 
 const updateSalesInvoiceSchema = z.object({
@@ -112,6 +113,7 @@ const updatePurchaseInvoiceSchema = z.object({
   total_amount: optionalNumber,
   vat_amount: optionalNumber,
   description: optionalString,
+  reversed_vat_id: optionalPositiveInt,
 });
 
 const deliverSalesInvoiceSchema = z.object({
@@ -568,6 +570,11 @@ export function createInvoiceTools(client: EFinancialsClient) {
             description:
               "VAT account ID. Required when vat_rate > 0. Use get_vat_info or list_sale_articles to find available VAT accounts.",
           },
+          reversed_vat_id: {
+            type: "number",
+            description:
+              "KMD (VAT declaration) classification for reverse-charge purchases. Use 7 for non-EU suppliers (KMD line 7: '0% Other purchases of goods 24% (KMD 7)'), 4 for intra-community EU acquisitions (KMD line 4). Omit for regular Estonian purchases.",
+          },
         },
         required: ["clients_id", "client_name", "invoice_no", "invoice_date", "total_amount"],
       },
@@ -605,6 +612,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
               vat_accounts_id: paramsParsed.vat_accounts_id,
               cl_vat_articles_id: paramsParsed.vat_rate ? 1 : undefined,
               cl_fringe_benefits_id: 1,
+              reversed_vat_id: paramsParsed.reversed_vat_id,
             },
           ],
         };
@@ -1038,6 +1046,11 @@ export function createInvoiceTools(client: EFinancialsClient) {
           total_amount: { type: "number" },
           vat_amount: { type: "number" },
           description: { type: "string" },
+          reversed_vat_id: {
+            type: "number",
+            description:
+              "KMD (VAT declaration) classification for reverse-charge purchases. Use 7 for non-EU suppliers (KMD line 7: '0% Other purchases of goods 24% (KMD 7)'), 4 for intra-community EU acquisitions (KMD line 4). When provided, applied to every existing line item on the invoice.",
+          },
         },
         required: ["id"],
       },
@@ -1051,6 +1064,14 @@ export function createInvoiceTools(client: EFinancialsClient) {
         const currentResponse = await client.get(`/v1/purchase_invoices/${id}`);
         const current = currentResponse as unknown as Record<string, unknown>;
 
+        const items =
+          updateParams.reversed_vat_id !== undefined
+            ? ((current.items as Array<Record<string, unknown>> | undefined) ?? []).map((item) => ({
+                ...item,
+                reversed_vat_id: updateParams.reversed_vat_id,
+              }))
+            : current.items;
+
         // Build payload with existing values as defaults, override with provided updates
         const apiPayload = {
           clients_id: updateParams.clients_id ?? current.clients_id,
@@ -1063,7 +1084,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
           gross_price: updateParams.total_amount ?? current.gross_price,
           vat_price: updateParams.vat_amount ?? current.vat_price ?? 0,
           notes: updateParams.description ?? current.notes,
-          items: current.items,
+          items,
         };
 
         const response = await client.patch<PurchaseInvoice>(

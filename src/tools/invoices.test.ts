@@ -572,6 +572,27 @@ describe("invoice tools", () => {
     expect(body.items[0].unit_net_price).toBe(100);
   });
 
+  it("create_purchase_invoice forwards reversed_vat_id to the line item", async () => {
+    vi.mocked(client.post).mockResolvedValue({
+      ...invoicesFixture.created_purchase_invoice,
+    } as never);
+    await tools.create_purchase_invoice.handler({
+      clients_id: 1,
+      client_name: "Cursor",
+      invoice_no: "78992E48-0013",
+      invoice_date: "2025-09-11",
+      total_amount: 17.36,
+      vat_rate: 0,
+      purchase_article_id: 23,
+      purchase_accounts_dimensions_id: 6488057,
+      reversed_vat_id: 7,
+    });
+    const body = vi.mocked(client.post).mock.calls[0][1] as {
+      items: { reversed_vat_id?: number }[];
+    };
+    expect(body.items[0].reversed_vat_id).toBe(7);
+  });
+
   it("update_purchase_invoice gets current then patches", async () => {
     vi.mocked(client.get).mockResolvedValueOnce({
       ...invoicesFixture.purchase_get_for_patch,
@@ -592,6 +613,46 @@ describe("invoice tools", () => {
     );
     const data = parseToolJson(result) as { success: boolean };
     expect(data.success).toBe(true);
+  });
+
+  it("update_purchase_invoice applies reversed_vat_id to each existing item", async () => {
+    vi.mocked(client.get).mockResolvedValueOnce({
+      ...invoicesFixture.purchase_get_for_patch,
+      items: [
+        { custom_title: "Line A", unit_net_price: 10 },
+        { custom_title: "Line B", unit_net_price: 20, reversed_vat_id: 4 },
+      ],
+    } as never);
+    vi.mocked(client.patch).mockResolvedValue({
+      ...invoicesFixture.patch_purchase_result,
+    } as never);
+
+    await tools.update_purchase_invoice.handler({ id: 11, reversed_vat_id: 7 });
+
+    const body = vi.mocked(client.patch).mock.calls[0][1] as {
+      items: Array<Record<string, unknown>>;
+    };
+    expect(body.items).toHaveLength(2);
+    expect(body.items[0]).toMatchObject({ custom_title: "Line A", reversed_vat_id: 7 });
+    expect(body.items[1]).toMatchObject({ custom_title: "Line B", reversed_vat_id: 7 });
+  });
+
+  it("update_purchase_invoice leaves items untouched when reversed_vat_id omitted", async () => {
+    const originalItems = [{ custom_title: "Line A", unit_net_price: 10 }];
+    vi.mocked(client.get).mockResolvedValueOnce({
+      ...invoicesFixture.purchase_get_for_patch,
+      items: originalItems,
+    } as never);
+    vi.mocked(client.patch).mockResolvedValue({
+      ...invoicesFixture.patch_purchase_result,
+    } as never);
+
+    await tools.update_purchase_invoice.handler({ id: 11, total_amount: 150 });
+
+    const body = vi.mocked(client.patch).mock.calls[0][1] as {
+      items: Array<Record<string, unknown>>;
+    };
+    expect(body.items).toBe(originalItems);
   });
 
   it("update_purchase_invoice uses term_days and vat fallbacks from minimal current", async () => {

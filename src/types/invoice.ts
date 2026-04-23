@@ -64,4 +64,5 @@ export interface CreatePurchaseInvoiceParams {
   purchase_accounts_dimensions_id?: number;
   vat_rate?: number;
   vat_accounts_id?: number;
+  reversed_vat_id?: number;
 }

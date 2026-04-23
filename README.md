@@ -135,7 +135,7 @@ The server advertises **82 tools** across transactions, clients, invoices, invoi
 | `get_sales_invoice` | One sales invoice. |
 | `get_purchase_invoice` | One purchase invoice. |
 | `create_sales_invoice` | Draft sales invoice. |
-| `create_purchase_invoice` | Draft purchase invoice. |
+| `create_purchase_invoice` | Draft purchase invoice. Supports `reversed_vat_id` for KMD reverse-charge classification (7 = non-EU, 4 = EU intra-community). |
 | `update_sales_invoice` | PATCH sales draft. |
 | `delete_sales_invoice` | DELETE sales invoice. |
 | `register_sales_invoice` | Confirm sales invoice. |
@@ -147,7 +147,7 @@ The server advertises **82 tools** across transactions, clients, invoices, invoi
 | `delete_sales_invoice_user_file` | Delete user file. |
 | `get_sales_invoice_delivery_options` | Delivery options (e-invoice/email). |
 | `deliver_sales_invoice` | Send e-invoice/email. |
-| `update_purchase_invoice` | PATCH purchase draft. |
+| `update_purchase_invoice` | PATCH purchase draft. Supports `reversed_vat_id` (applied to every existing line item). |
 | `delete_purchase_invoice` | DELETE purchase invoice. |
 | `register_purchase_invoice` | Confirm purchase invoice. |
 | `invalidate_purchase_invoice` | Reverse purchase confirmation. |
