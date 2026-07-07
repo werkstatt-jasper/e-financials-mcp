@@ -91,9 +91,29 @@ flowchart LR
 2. **`X-AUTH-KEY`** — `{RIK_API_KEY_PUBLIC}:{signature}` where `signature` is **Base64(HMAC-SHA-384)** over `{RIK_API_KEY_ID}:{X-AUTH-QUERYTIME}:{urlPath}`.
 3. `urlPath` is the **path only** (e.g. `/v1/transactions`), no query string.
 
-## MCP tools reference
+## MCP surface
+
+The server advertises **tools**, **prompts**, and **resources** over stdio.
+
+### Tools
 
 The server advertises **82 tools** across transactions, clients, invoices, invoice settings, products, journals, accounts, reference data, and reports. All tool results are JSON in text content blocks.
+
+### Prompts
+
+| Prompt | Description |
+|--------|-------------|
+| `getting-started` | Introduces the tool surface, `efinancials://` resources, and safe-usage conventions. Optional `focus` argument to emphasize a topic. |
+
+### Resources
+
+Static and templated resources use the **`efinancials://`** URI scheme.
+
+| URI | Description |
+|-----|-------------|
+| `efinancials://server_info` | Server name, version, and capability summary (JSON; no API call). |
+
+## MCP tools reference
 
 ### Transactions
 

@@ -52,15 +52,21 @@ describe("startApp", () => {
   });
 
   it("builds tools, registers handlers, and starts stdio server", async () => {
-    const spy = vi.spyOn(serverSetup, "registerMcpToolHandlers");
+    const spyTools = vi.spyOn(serverSetup, "registerMcpToolHandlers");
+    const spyPrompts = vi.spyOn(serverSetup, "registerMcpPromptHandlers");
+    const spyResources = vi.spyOn(serverSetup, "registerMcpResourceHandlers");
     await startApp();
 
-    expect(spy).toHaveBeenCalledWith(expect.anything(), expect.anything());
-    spy.mockRestore();
+    expect(spyTools).toHaveBeenCalledWith(expect.anything(), expect.anything());
+    expect(spyPrompts).toHaveBeenCalledWith(expect.anything(), expect.anything());
+    expect(spyResources).toHaveBeenCalledWith(expect.anything(), expect.anything());
+    spyTools.mockRestore();
+    spyPrompts.mockRestore();
+    spyResources.mockRestore();
 
     expect(Server).toHaveBeenCalledWith(
       { name: "e-financials", version: "1.0.0" },
-      { capabilities: { tools: {} } },
+      { capabilities: { tools: {}, prompts: {}, resources: {} } },
     );
     expect(mockSetRequestHandler).toHaveBeenCalled();
     expect(hoisted.startStdioServer).toHaveBeenCalledTimes(1);

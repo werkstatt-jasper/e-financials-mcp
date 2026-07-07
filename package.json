@@ -12,6 +12,8 @@
     "./client": "./dist/client.js",
     "./auth": "./dist/auth.js",
     "./server-setup": "./dist/server-setup.js",
+    "./prompts": "./dist/prompts.js",
+    "./resources": "./dist/resources.js",
     "./tools/*": "./dist/tools/*.js",
     "./logger": "./dist/logger.js",
     "./api-error": "./dist/api-error.js",

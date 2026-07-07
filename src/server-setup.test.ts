@@ -1,6 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EFinancialsClient } from "./client.js";
-import { buildAllTools, registerMcpToolHandlers, startStdioServer } from "./server-setup.js";
+import { buildAllPrompts } from "./prompts.js";
+import { buildAllResources, matchUriTemplate } from "./resources.js";
+import {
+  buildAllTools,
+  registerMcpPromptHandlers,
+  registerMcpResourceHandlers,
+  registerMcpToolHandlers,
+  startStdioServer,
+} from "./server-setup.js";
 
 const mockLoggerInfo = vi.hoisted(() => vi.fn());
 const mockLoggerWarn = vi.hoisted(() => vi.fn());
@@ -39,6 +47,162 @@ describe("buildAllTools", () => {
     expect(tools.list_sales_invoices).toBeDefined();
     expect(tools.list_accounts).toBeDefined();
     expect(tools.reconciliation_report).toBeDefined();
+  });
+});
+
+describe("registerMcpPromptHandlers", () => {
+  const setRequestHandler = vi.fn();
+
+  beforeEach(() => {
+    setRequestHandler.mockReset();
+    mockLoggerInfo.mockReset();
+    mockLoggerWarn.mockReset();
+  });
+
+  it("lists prompts with arguments metadata", async () => {
+    const prompts = buildAllPrompts();
+    registerMcpPromptHandlers({ setRequestHandler }, prompts);
+
+    expect(setRequestHandler).toHaveBeenCalledTimes(2);
+    const listFn = setRequestHandler.mock.calls[0][1] as () => Promise<{
+      prompts: { name: string }[];
+    }>;
+    const listResult = await listFn();
+    expect(listResult.prompts.map((p) => p.name)).toContain("getting-started");
+  });
+
+  it("renders getting-started prompt", async () => {
+    registerMcpPromptHandlers({ setRequestHandler }, buildAllPrompts());
+    const getFn = setRequestHandler.mock.calls[1][1] as (req: {
+      params: { name: string; arguments?: Record<string, string> };
+    }) => Promise<{ messages: { content: { text: string } }[] }>;
+
+    const result = await getFn({
+      params: { name: "getting-started", arguments: { focus: "bank" } },
+    });
+    expect(result.messages[0].content.text).toContain("bank");
+    expect(mockLoggerInfo).toHaveBeenCalledWith(
+      expect.objectContaining({ component: "prompt", prompt: "getting-started", outcome: "ok" }),
+      "mcp prompt get",
+    );
+  });
+
+  it("throws for unknown prompt", async () => {
+    registerMcpPromptHandlers({ setRequestHandler }, buildAllPrompts());
+    const getFn = setRequestHandler.mock.calls[1][1] as (req: {
+      params: { name: string };
+    }) => Promise<unknown>;
+
+    await expect(getFn({ params: { name: "missing" } })).rejects.toThrow("Unknown prompt: missing");
+    expect(mockLoggerWarn).toHaveBeenCalledWith(
+      expect.objectContaining({ component: "prompt", outcome: "unknown_prompt" }),
+      "mcp prompt get",
+    );
+  });
+
+  it("throws when required argument is missing", async () => {
+    const prompts = {
+      req: {
+        description: "needs arg",
+        arguments: [{ name: "x", required: true }],
+        render: () => ({
+          messages: [{ role: "user" as const, content: { type: "text" as const, text: "ok" } }],
+        }),
+      },
+    };
+    registerMcpPromptHandlers({ setRequestHandler }, prompts);
+    const getFn = setRequestHandler.mock.calls[1][1] as (req: {
+      params: { name: string; arguments?: Record<string, string> };
+    }) => Promise<unknown>;
+
+    await expect(getFn({ params: { name: "req", arguments: {} } })).rejects.toThrow(
+      "Missing required prompt argument: x",
+    );
+  });
+});
+
+describe("registerMcpResourceHandlers", () => {
+  const setRequestHandler = vi.fn();
+
+  beforeEach(() => {
+    setRequestHandler.mockReset();
+    mockLoggerInfo.mockReset();
+    mockLoggerWarn.mockReset();
+  });
+
+  it("lists static resources and empty templates", async () => {
+    registerMcpResourceHandlers({ setRequestHandler }, buildAllResources());
+    expect(setRequestHandler).toHaveBeenCalledTimes(3);
+
+    const listResourcesFn = setRequestHandler.mock.calls[0][1] as () => Promise<{
+      resources: { uri: string }[];
+    }>;
+    const listTemplatesFn = setRequestHandler.mock.calls[1][1] as () => Promise<{
+      resourceTemplates: unknown[];
+    }>;
+
+    const resources = await listResourcesFn();
+    expect(resources.resources.some((r) => r.uri === "efinancials://server_info")).toBe(true);
+    const templates = await listTemplatesFn();
+    expect(templates.resourceTemplates).toEqual([]);
+  });
+
+  it("reads server_info resource", async () => {
+    registerMcpResourceHandlers({ setRequestHandler }, buildAllResources());
+    const readFn = setRequestHandler.mock.calls[2][1] as (req: {
+      params: { uri: string };
+    }) => Promise<{ contents: { text: string }[] }>;
+
+    const result = await readFn({ params: { uri: "efinancials://server_info" } });
+    expect(JSON.parse(result.contents[0].text)).toMatchObject({ name: "e-financials" });
+    expect(mockLoggerInfo).toHaveBeenCalledWith(
+      expect.objectContaining({ component: "resource", outcome: "ok" }),
+      "mcp resource read",
+    );
+  });
+
+  it("matches template resources", async () => {
+    const registry = {
+      resources: {},
+      templates: {
+        item: {
+          uriTemplate: "efinancials://items/{id}",
+          name: "item",
+          description: "item by id",
+          mimeType: "application/json",
+          read: (_uri: string, vars: Record<string, string>) => ({
+            uri: `efinancials://items/${vars.id}`,
+            mimeType: "application/json",
+            text: JSON.stringify({ id: vars.id }),
+          }),
+        },
+      },
+    };
+    registerMcpResourceHandlers({ setRequestHandler }, registry);
+    const readFn = setRequestHandler.mock.calls[2][1] as (req: {
+      params: { uri: string };
+    }) => Promise<{ contents: { text: string }[] }>;
+
+    const result = await readFn({ params: { uri: "efinancials://items/99" } });
+    expect(JSON.parse(result.contents[0].text)).toEqual({ id: "99" });
+    expect(matchUriTemplate("efinancials://items/{id}", "efinancials://items/99")).toEqual({
+      id: "99",
+    });
+  });
+
+  it("throws for unknown resource URI", async () => {
+    registerMcpResourceHandlers({ setRequestHandler }, buildAllResources());
+    const readFn = setRequestHandler.mock.calls[2][1] as (req: {
+      params: { uri: string };
+    }) => Promise<unknown>;
+
+    await expect(readFn({ params: { uri: "efinancials://missing" } })).rejects.toThrow(
+      "Unknown resource: efinancials://missing",
+    );
+    expect(mockLoggerWarn).toHaveBeenCalledWith(
+      expect.objectContaining({ component: "resource", outcome: "unknown_resource" }),
+      "mcp resource read",
+    );
   });
 });
 
