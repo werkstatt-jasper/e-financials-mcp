@@ -34,7 +34,9 @@ describe("matchUriTemplate", () => {
   });
 
   it("escapes regex metacharacters in literal template segments", () => {
-    expect(matchUriTemplate("efinancials://v1.0/{id}", "efinancials://v1.0/42")).toEqual({ id: "42" });
+    expect(matchUriTemplate("efinancials://v1.0/{id}", "efinancials://v1.0/42")).toEqual({
+      id: "42",
+    });
     expect(matchUriTemplate("efinancials://v1.0/{id}", "efinancials://vX0/42")).toBeNull();
   });
 });
