@@ -27,6 +27,16 @@ describe("matchUriTemplate", () => {
       matchUriTemplate("efinancials://docs/{name}", "efinancials://docs/hello%20world"),
     ).toEqual({ name: "hello world" });
   });
+
+  it("matches literal templates without variables", () => {
+    expect(matchUriTemplate("efinancials://fixed", "efinancials://fixed")).toEqual({});
+    expect(matchUriTemplate("efinancials://fixed", "efinancials://other")).toBeNull();
+  });
+
+  it("escapes regex metacharacters in literal template segments", () => {
+    expect(matchUriTemplate("efinancials://v1.0/{id}", "efinancials://v1.0/42")).toEqual({ id: "42" });
+    expect(matchUriTemplate("efinancials://v1.0/{id}", "efinancials://vX0/42")).toBeNull();
+  });
 });
 
 describe("buildAllResources", () => {

@@ -57,7 +57,7 @@ export function matchUriTemplate(uriTemplate: string, uri: string): Record<strin
 
   const vars: Record<string, string> = {};
   for (let i = 0; i < varNames.length; i += 1) {
-    vars[varNames[i]] = decodeURIComponent(match[i + 1] ?? "");
+    vars[varNames[i]] = decodeURIComponent(match[i + 1] as string);
   }
   return vars;
 }

@@ -87,6 +87,46 @@ describe("registerMcpPromptHandlers", () => {
     );
   });
 
+  it("renders prompts without an arguments field on the request", async () => {
+    registerMcpPromptHandlers({ setRequestHandler }, buildAllPrompts());
+    const getFn = setRequestHandler.mock.calls[1][1] as (req: {
+      params: { name: string };
+    }) => Promise<{ messages: { content: { text: string } }[] }>;
+
+    const result = await getFn({ params: { name: "getting-started" } });
+    expect(result.messages[0].content.text).toContain("Safe usage");
+  });
+
+  it("ignores non-string prompt argument values", async () => {
+    registerMcpPromptHandlers({ setRequestHandler }, buildAllPrompts());
+    const getFn = setRequestHandler.mock.calls[1][1] as (req: {
+      params: { name: string; arguments?: Record<string, unknown> };
+    }) => Promise<{ messages: { content: { text: string } }[] }>;
+
+    const result = await getFn({
+      params: { name: "getting-started", arguments: { focus: 123 } },
+    });
+    expect(result.messages[0].content.text).not.toContain("User focus");
+  });
+
+  it("renders prompts that declare no arguments schema", async () => {
+    const prompts = {
+      plain: {
+        description: "plain",
+        render: () => ({
+          messages: [{ role: "user" as const, content: { type: "text" as const, text: "plain" } }],
+        }),
+      },
+    };
+    registerMcpPromptHandlers({ setRequestHandler }, prompts);
+    const getFn = setRequestHandler.mock.calls[1][1] as (req: {
+      params: { name: string };
+    }) => Promise<{ messages: { content: { text: string } }[] }>;
+
+    const result = await getFn({ params: { name: "plain" } });
+    expect(result.messages[0].content.text).toBe("plain");
+  });
+
   it("throws for unknown prompt", async () => {
     registerMcpPromptHandlers({ setRequestHandler }, buildAllPrompts());
     const getFn = setRequestHandler.mock.calls[1][1] as (req: {
@@ -161,6 +201,37 @@ describe("registerMcpResourceHandlers", () => {
     );
   });
 
+  it("lists resource templates when registry has templates", async () => {
+    const registry = {
+      resources: {},
+      templates: {
+        item: {
+          uriTemplate: "efinancials://items/{id}",
+          name: "item",
+          description: "item by id",
+          mimeType: "application/json",
+          read: (_uri: string, vars: Record<string, string>) => ({
+            uri: `efinancials://items/${vars.id}`,
+            mimeType: "application/json",
+            text: JSON.stringify({ id: vars.id }),
+          }),
+        },
+      },
+    };
+    registerMcpResourceHandlers({ setRequestHandler }, registry);
+    const listTemplatesFn = setRequestHandler.mock.calls[1][1] as () => Promise<{
+      resourceTemplates: { uriTemplate: string; name: string }[];
+    }>;
+
+    const templates = await listTemplatesFn();
+    expect(templates.resourceTemplates).toEqual([
+      expect.objectContaining({
+        uriTemplate: "efinancials://items/{id}",
+        name: "item",
+      }),
+    ]);
+  });
+
   it("matches template resources", async () => {
     const registry = {
       resources: {},
@@ -188,6 +259,43 @@ describe("registerMcpResourceHandlers", () => {
     expect(matchUriTemplate("efinancials://items/{id}", "efinancials://items/99")).toEqual({
       id: "99",
     });
+  });
+
+  it("skips non-matching templates before finding a match", async () => {
+    const registry = {
+      resources: {},
+      templates: {
+        other: {
+          uriTemplate: "efinancials://other/{id}",
+          name: "other",
+          description: "other",
+          mimeType: "application/json",
+          read: (_uri: string, vars: Record<string, string>) => ({
+            uri: `efinancials://other/${vars.id}`,
+            mimeType: "application/json",
+            text: JSON.stringify({ kind: "other" }),
+          }),
+        },
+        item: {
+          uriTemplate: "efinancials://items/{id}",
+          name: "item",
+          description: "item by id",
+          mimeType: "application/json",
+          read: (_uri: string, vars: Record<string, string>) => ({
+            uri: `efinancials://items/${vars.id}`,
+            mimeType: "application/json",
+            text: JSON.stringify({ id: vars.id }),
+          }),
+        },
+      },
+    };
+    registerMcpResourceHandlers({ setRequestHandler }, registry);
+    const readFn = setRequestHandler.mock.calls[2][1] as (req: {
+      params: { uri: string };
+    }) => Promise<{ contents: { text: string }[] }>;
+
+    const result = await readFn({ params: { uri: "efinancials://items/7" } });
+    expect(JSON.parse(result.contents[0].text)).toEqual({ id: "7" });
   });
 
   it("throws for unknown resource URI", async () => {
