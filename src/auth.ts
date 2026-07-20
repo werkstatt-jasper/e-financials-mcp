@@ -4,6 +4,14 @@ import { assertAllowedRikBaseUrl } from "./rik-base-url.js";
 
 export const DEFAULT_RIK_REQUEST_TIMEOUT_MS = 30_000;
 
+/**
+ * Descriptive User-Agent for outbound RIK API requests. Node's fetch default
+ * ("node") is a generic UA that bot-protection layers (the production RIK API
+ * sits behind Cloudflare) may challenge with an HTML 403 page.
+ */
+export const RIK_CLIENT_USER_AGENT =
+  "e-financials-mcp/1.0 (+https://github.com/werkstatt-jasper/e-financials-mcp)";
+
 export interface AuthConfig {
   apiKeyId: string;
   apiKeyPassword: string;
@@ -41,6 +49,7 @@ export function rikRequestTimeoutMsFromEnv(): number {
 export interface AuthHeaders {
   [key: string]: string;
   "Content-Type": string;
+  "User-Agent": string;
   "X-AUTH-QUERYTIME": string;
   "X-AUTH-KEY": string;
 }
@@ -89,6 +98,7 @@ export function generateAuthHeaders(urlPath: string, config: AuthConfig): AuthHe
 
   return {
     "Content-Type": "application/json",
+    "User-Agent": RIK_CLIENT_USER_AGENT,
     "X-AUTH-QUERYTIME": queryTime,
     "X-AUTH-KEY": authKey,
   };

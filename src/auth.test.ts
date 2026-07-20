@@ -4,6 +4,7 @@ import {
   DEFAULT_RIK_REQUEST_TIMEOUT_MS,
   generateAuthHeaders,
   loadAuthConfig,
+  RIK_CLIENT_USER_AGENT,
   rikRequestTimeoutMsFromEnv,
 } from "./auth.js";
 
@@ -170,6 +171,12 @@ describe("generateAuthHeaders", () => {
   it("sets Content-Type to application/json", () => {
     const headers = generateAuthHeaders("/v1/transactions", config);
     expect(headers["Content-Type"]).toBe("application/json");
+  });
+
+  it("sets a descriptive User-Agent instead of Node's generic default", () => {
+    const headers = generateAuthHeaders("/v1/transactions", config);
+    expect(headers["User-Agent"]).toBe(RIK_CLIENT_USER_AGENT);
+    expect(headers["User-Agent"]).toMatch(/^e-financials-mcp\//);
   });
 
   it("builds X-AUTH-KEY as publicKey:base64 HMAC-SHA384 of apiKeyId:time:path", () => {

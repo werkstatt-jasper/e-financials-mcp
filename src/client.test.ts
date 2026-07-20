@@ -15,6 +15,7 @@ vi.mock("./auth.js", async (importOriginal) => {
     ...mod,
     generateAuthHeaders: vi.fn(() => ({
       "Content-Type": "application/json",
+      "User-Agent": "e-financials-mcp/test",
       "X-AUTH-QUERYTIME": "2025-06-15T12:00:00",
       "X-AUTH-KEY": "test-public:stub-sig",
     })),
@@ -106,6 +107,7 @@ describe("EFinancialsClient", () => {
 
       expect(vi.mocked(fetch).mock.calls[0][1]?.headers).toEqual({
         "Content-Type": "application/json",
+        "User-Agent": "e-financials-mcp/test",
         "X-AUTH-QUERYTIME": "2025-06-15T12:00:00",
         "X-AUTH-KEY": "test-public:stub-sig",
       });
@@ -368,6 +370,29 @@ describe("EFinancialsClient", () => {
 
       await expect(client.get("/v1/x")).rejects.toThrow(
         "HTTP Error 502: Bad Gateway - plain text error [GET /v1/x]",
+      );
+    });
+
+    it("logs the cf-ray header when an error response is served via Cloudflare", async () => {
+      vi.mocked(fetch).mockResolvedValue(
+        new Response("<html>Attention Required! | Cloudflare</html>", {
+          status: 403,
+          statusText: "Forbidden",
+          headers: { "cf-ray": "8f2a1b3c4d5e6f70-HEL" },
+        }),
+      );
+
+      await expect(client.get("/v1/x")).rejects.toThrow("HTTP Error 403");
+
+      expect(rootLoggerMocks.warn).toHaveBeenCalledWith(
+        {
+          component: "http",
+          method: "GET",
+          path: "/v1/x",
+          httpStatus: 403,
+          cfRay: "8f2a1b3c4d5e6f70-HEL",
+        },
+        "rik error response served via cloudflare",
       );
     });
   });

@@ -163,6 +163,16 @@ export class EFinancialsClient {
             continue;
           }
           const text = await response.text();
+          // Cloudflare fronts the production RIK API; keep the ray ID so
+          // edge-level blocks (e.g. bot-management 403s) are traceable in
+          // support tickets.
+          const cfRay = response.headers.get("cf-ray");
+          if (cfRay !== null) {
+            this.logger.warn(
+              { component: "http", method, path, httpStatus: response.status, cfRay },
+              "rik error response served via cloudflare",
+            );
+          }
           throwNonOkResponse(method, urlString, response, text);
         }
 
