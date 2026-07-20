@@ -138,6 +138,116 @@ describe("report tools", () => {
     expect(client.get).toHaveBeenCalledWith("/v1/purchase_invoices", params);
   });
 
+  it("financial_summary sums gross_price from live API items and never emits null", async () => {
+    vi.mocked(client.get).mockImplementation(async (path: string) => {
+      if (path === "/v1/transactions") {
+        return { items: [] } as never;
+      }
+      if (path === "/v1/sale_invoices") {
+        // Live API items: gross_price, no total_amount / invoice_date
+        return {
+          items: [
+            { id: 1, gross_price: 100.5 },
+            { id: 2, gross_price: null, total_amount: 25 },
+            { id: 3 },
+          ],
+        } as never;
+      }
+      if (path === "/v1/purchase_invoices") {
+        return {
+          items: [
+            { id: 4, gross_price: 10, journal_date: "2025-06-05" },
+            { id: 5, gross_price: 5, create_date: "2025-06-06" },
+            { id: 6, gross_price: 7 },
+            { id: 7, gross_price: 999, journal_date: "2024-01-01" },
+          ],
+        } as never;
+      }
+      throw new Error(path);
+    });
+
+    const result = await tools.financial_summary.handler({ month: "2025-06" });
+    const data = parseToolJson(result) as {
+      period: { from: string; to: string };
+      invoices: {
+        sales_invoiced: number;
+        purchases_invoiced: number;
+        sales_invoice_count: number;
+      };
+    };
+    // UTC month window regardless of process timezone
+    expect(data.period.from).toBe("2025-06-01");
+    expect(data.period.to).toBe("2025-06-30");
+    expect(data.invoices.sales_invoiced).toBe(125.5);
+    expect(data.invoices.sales_invoice_count).toBe(3);
+    // journal_date/create_date in range or no date at all count; 2024 item is excluded
+    expect(data.invoices.purchases_invoiced).toBe(22);
+  });
+
+  it("reconciliation_report maps live API fields into action items", async () => {
+    vi.mocked(client.get).mockImplementation(async (path: string) => {
+      if (path === "/v1/transactions") {
+        return { items: [] } as never;
+      }
+      if (path === "/v1/sale_invoices") {
+        return {
+          items: [
+            {
+              id: 1,
+              payment_status: "NOT_PAID",
+              number: "5",
+              client_name: "Acme",
+              gross_price: 60,
+              create_date: "2025-06-01",
+              term_days: 14,
+            },
+            { id: 3, payment_status: "NOT_PAID", client_name: "NoDates", gross_price: 5 },
+          ],
+        } as never;
+      }
+      if (path === "/v1/purchase_invoices") {
+        return {
+          items: [
+            {
+              id: 2,
+              payment_status: "NOT_PAID",
+              number: "P9",
+              client_name: "Supplier OÜ",
+              gross_price: 40,
+              create_date: "2025-06-01",
+            },
+          ],
+        } as never;
+      }
+      throw new Error(path);
+    });
+
+    const result = await tools.reconciliation_report.handler({});
+    const data = parseToolJson(result) as {
+      invoices: { sales: { unpaid_amount: number }; purchase: { unpaid_amount: number } };
+      action_items: {
+        invoices_to_collect: {
+          invoice_no?: string;
+          amount: number;
+          due_date?: string;
+        }[];
+        invoices_to_pay: { invoice_no?: string; supplier?: string; due_date?: string }[];
+      };
+    };
+    expect(data.invoices.sales.unpaid_amount).toBe(65);
+    expect(data.invoices.purchase.unpaid_amount).toBe(40);
+    expect(data.action_items.invoices_to_collect[0]).toMatchObject({
+      invoice_no: "5",
+      amount: 60,
+      due_date: "2025-06-15",
+    });
+    // No dates at all: due_date omitted
+    expect(data.action_items.invoices_to_collect[1].due_date).toBeUndefined();
+    // Purchase invoices use client_name for the supplier; no term_days -> no due_date
+    expect(data.action_items.invoices_to_pay[0].supplier).toBe("Supplier OÜ");
+    expect(data.action_items.invoices_to_pay[0].due_date).toBeUndefined();
+  });
+
   it("match_transaction_to_supplier loads description from transaction_id", async () => {
     vi.mocked(client.get).mockImplementation(async (path: string) => {
       if (path === "/v1/transactions/99") {
