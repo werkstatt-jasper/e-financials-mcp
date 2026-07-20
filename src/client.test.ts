@@ -26,10 +26,15 @@ vi.mock("./logger.js", () => ({
   logger: rootLoggerMocks,
 }));
 
+vi.mock("./rik-http.js", () => ({
+  rikFetch: vi.fn(),
+}));
+
 import errorResponses from "./__fixtures__/error-responses.json" with { type: "json" };
 import transactionsFixture from "./__fixtures__/transactions.json" with { type: "json" };
 import { generateAuthHeaders } from "./auth.js";
 import { EFinancialsApiError, EFinancialsClient } from "./client.js";
+import { rikFetch } from "./rik-http.js";
 
 const baseConfig = {
   apiKeyId: "id",
@@ -52,14 +57,13 @@ describe("EFinancialsClient", () => {
 
   beforeEach(() => {
     client = new EFinancialsClient(baseConfig);
-    vi.stubGlobal("fetch", vi.fn());
+    vi.mocked(rikFetch).mockReset();
     vi.mocked(generateAuthHeaders).mockClear();
     rootLoggerMocks.info.mockClear();
     rootLoggerMocks.warn.mockClear();
   });
 
   afterEach(() => {
-    vi.unstubAllGlobals();
     vi.unstubAllEnvs();
   });
 
@@ -73,7 +77,7 @@ describe("EFinancialsClient", () => {
         baseUrl: "https://demo-rmp-api.rik.ee",
       };
       const dynamicClient = new EFinancialsClient(() => (call++ === 0 ? configA : configB));
-      vi.mocked(fetch)
+      vi.mocked(rikFetch)
         .mockResolvedValueOnce(jsonResponse(transactionsFixture.list_empty))
         .mockResolvedValueOnce(jsonResponse(transactionsFixture.list_empty));
 
@@ -87,12 +91,12 @@ describe("EFinancialsClient", () => {
 
   describe("request / HTTP verbs", () => {
     it("builds URL with query params and omits undefined", async () => {
-      vi.mocked(fetch).mockResolvedValue(jsonResponse(transactionsFixture.list_empty));
+      vi.mocked(rikFetch).mockResolvedValue(jsonResponse(transactionsFixture.list_empty));
 
       await client.get("/v1/clients", { page: 2, is_supplier: true, filter: undefined });
 
       expect(generateAuthHeaders).toHaveBeenCalledWith("/v1/clients", baseConfig);
-      const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string;
+      const calledUrl = vi.mocked(rikFetch).mock.calls[0][0] as string;
       const url = new URL(calledUrl);
       expect(url.origin + url.pathname).toBe("https://rmp-api.rik.ee/v1/clients");
       expect(url.searchParams.get("page")).toBe("2");
@@ -101,11 +105,11 @@ describe("EFinancialsClient", () => {
     });
 
     it("passes mocked auth headers to fetch", async () => {
-      vi.mocked(fetch).mockResolvedValue(jsonResponse(transactionsFixture.http_ok_flag));
+      vi.mocked(rikFetch).mockResolvedValue(jsonResponse(transactionsFixture.http_ok_flag));
 
       await client.get("/v1/foo");
 
-      expect(vi.mocked(fetch).mock.calls[0][1]?.headers).toEqual({
+      expect(vi.mocked(rikFetch).mock.calls[0][1]?.headers).toEqual({
         "Content-Type": "application/json",
         "User-Agent": "e-financials-mcp/test",
         "X-AUTH-QUERYTIME": "2025-06-15T12:00:00",
@@ -115,18 +119,18 @@ describe("EFinancialsClient", () => {
 
     it("passes an AbortSignal from AbortSignal.timeout to fetch", async () => {
       const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
-      vi.mocked(fetch).mockResolvedValue(jsonResponse(transactionsFixture.list_empty));
+      vi.mocked(rikFetch).mockResolvedValue(jsonResponse(transactionsFixture.list_empty));
 
       await client.get("/v1/foo");
 
       expect(timeoutSpy).toHaveBeenCalledWith(30_000);
-      expect(vi.mocked(fetch).mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
+      expect(vi.mocked(rikFetch).mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
       timeoutSpy.mockRestore();
     });
 
     it("uses config.requestTimeoutMs for AbortSignal.timeout", async () => {
       const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
-      vi.mocked(fetch).mockResolvedValue(jsonResponse(transactionsFixture.list_empty));
+      vi.mocked(rikFetch).mockResolvedValue(jsonResponse(transactionsFixture.list_empty));
       const c = new EFinancialsClient({ ...baseConfig, requestTimeoutMs: 12_345 });
 
       await c.get("/v1/foo");
@@ -138,7 +142,7 @@ describe("EFinancialsClient", () => {
     it("falls back to RIK_REQUEST_TIMEOUT_MS when config omits requestTimeoutMs", async () => {
       vi.stubEnv("RIK_REQUEST_TIMEOUT_MS", "7777");
       const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
-      vi.mocked(fetch).mockResolvedValue(jsonResponse(transactionsFixture.list_empty));
+      vi.mocked(rikFetch).mockResolvedValue(jsonResponse(transactionsFixture.list_empty));
       const { requestTimeoutMs: _omitTimeout, ...cfgNoTimeout } = baseConfig;
       void _omitTimeout;
       const c = new EFinancialsClient(cfgNoTimeout);
@@ -150,37 +154,37 @@ describe("EFinancialsClient", () => {
     });
 
     it("sends JSON body for POST", async () => {
-      vi.mocked(fetch).mockResolvedValue(jsonResponse(transactionsFixture.http_post_created));
+      vi.mocked(rikFetch).mockResolvedValue(jsonResponse(transactionsFixture.http_post_created));
       const body = { name: "Acme", n: 42 };
 
       await client.post("/v1/clients", body);
 
-      expect(vi.mocked(fetch).mock.calls[0][1]).toMatchObject({
+      expect(vi.mocked(rikFetch).mock.calls[0][1]).toMatchObject({
         method: "POST",
         body: JSON.stringify(body),
       });
     });
 
     it("sends JSON body for PUT", async () => {
-      vi.mocked(fetch).mockResolvedValue(jsonResponse(transactionsFixture.http_ok_empty));
+      vi.mocked(rikFetch).mockResolvedValue(jsonResponse(transactionsFixture.http_ok_empty));
       await client.put("/v1/clients/1", { name: "Updated" });
-      expect(vi.mocked(fetch).mock.calls[0][1]).toMatchObject({
+      expect(vi.mocked(rikFetch).mock.calls[0][1]).toMatchObject({
         method: "PUT",
         body: JSON.stringify({ name: "Updated" }),
       });
     });
 
     it("sends JSON body for PATCH", async () => {
-      vi.mocked(fetch).mockResolvedValue(jsonResponse(transactionsFixture.http_ok_empty));
+      vi.mocked(rikFetch).mockResolvedValue(jsonResponse(transactionsFixture.http_ok_empty));
       await client.patch("/v1/clients/1", { active: false });
-      expect(vi.mocked(fetch).mock.calls[0][1]).toMatchObject({
+      expect(vi.mocked(rikFetch).mock.calls[0][1]).toMatchObject({
         method: "PATCH",
         body: JSON.stringify({ active: false }),
       });
     });
 
     it("normalizes created_object_id to id on POST responses", async () => {
-      vi.mocked(fetch).mockResolvedValue(
+      vi.mocked(rikFetch).mockResolvedValue(
         jsonResponse({ response_code: 0, created_object_id: 42, messages: ["OK"] }),
       );
 
@@ -190,7 +194,7 @@ describe("EFinancialsClient", () => {
     });
 
     it("does not overwrite existing id with created_object_id", async () => {
-      vi.mocked(fetch).mockResolvedValue(
+      vi.mocked(rikFetch).mockResolvedValue(
         jsonResponse({ response_code: 0, id: 99, created_object_id: 42, messages: ["OK"] }),
       );
 
@@ -200,13 +204,13 @@ describe("EFinancialsClient", () => {
     });
 
     it("omits body for GET and DELETE when no body", async () => {
-      vi.mocked(fetch).mockResolvedValue(jsonResponse(transactionsFixture.list_empty));
+      vi.mocked(rikFetch).mockResolvedValue(jsonResponse(transactionsFixture.list_empty));
       await client.get("/v1/x");
-      expect(vi.mocked(fetch).mock.calls[0][1]?.body).toBeUndefined();
+      expect(vi.mocked(rikFetch).mock.calls[0][1]?.body).toBeUndefined();
 
-      vi.mocked(fetch).mockResolvedValue(jsonResponse(transactionsFixture.http_ok_empty));
+      vi.mocked(rikFetch).mockResolvedValue(jsonResponse(transactionsFixture.http_ok_empty));
       await client.delete("/v1/x/1");
-      expect(vi.mocked(fetch).mock.calls[1][1]?.body).toBeUndefined();
+      expect(vi.mocked(rikFetch).mock.calls[1][1]?.body).toBeUndefined();
     });
   });
 
@@ -219,11 +223,10 @@ describe("EFinancialsClient", () => {
       logClient = new EFinancialsClient(baseConfig, {
         logger: { info: logInfo } as unknown as Logger,
       });
-      vi.stubGlobal("fetch", vi.fn());
     });
 
     it("logs ok with path and method and omits secrets", async () => {
-      vi.mocked(fetch).mockResolvedValue(jsonResponse(transactionsFixture.list_empty));
+      vi.mocked(rikFetch).mockResolvedValue(jsonResponse(transactionsFixture.list_empty));
 
       await logClient.get("/v1/clients");
 
@@ -242,7 +245,7 @@ describe("EFinancialsClient", () => {
     });
 
     it("logs network_error on fetch failure", async () => {
-      vi.mocked(fetch).mockRejectedValueOnce(new TypeError("network down"));
+      vi.mocked(rikFetch).mockRejectedValueOnce(new TypeError("network down"));
 
       await expect(logClient.get("/v1/x")).rejects.toMatchObject({ kind: "network" });
 
@@ -259,7 +262,7 @@ describe("EFinancialsClient", () => {
     });
 
     it("logs http_error on non-OK response", async () => {
-      vi.mocked(fetch).mockResolvedValue(
+      vi.mocked(rikFetch).mockResolvedValue(
         jsonResponse(errorResponses.http_401_body, 401, "Unauthorized"),
       );
 
@@ -277,7 +280,7 @@ describe("EFinancialsClient", () => {
     });
 
     it("logs api_response_error when response_code is non-zero", async () => {
-      vi.mocked(fetch).mockResolvedValue(jsonResponse(errorResponses.api_business_error_body));
+      vi.mocked(rikFetch).mockResolvedValue(jsonResponse(errorResponses.api_business_error_body));
 
       await expect(logClient.get("/v1/x")).rejects.toMatchObject({ kind: "api" });
 
@@ -296,7 +299,7 @@ describe("EFinancialsClient", () => {
       vi.mocked(generateAuthHeaders).mockImplementationOnce(() => {
         throw new Error("auth setup failed");
       });
-      vi.mocked(fetch).mockResolvedValue(jsonResponse(transactionsFixture.list_empty));
+      vi.mocked(rikFetch).mockResolvedValue(jsonResponse(transactionsFixture.list_empty));
 
       await expect(logClient.get("/v1/x")).rejects.toThrow("auth setup failed");
 
@@ -312,7 +315,7 @@ describe("EFinancialsClient", () => {
 
   describe("HTTP error responses (!response.ok)", () => {
     it("throws API Error with response_message and response_code from JSON body", async () => {
-      vi.mocked(fetch).mockResolvedValue(
+      vi.mocked(rikFetch).mockResolvedValue(
         jsonResponse(errorResponses.http_401_body, 401, "Unauthorized"),
       );
 
@@ -320,7 +323,7 @@ describe("EFinancialsClient", () => {
     });
 
     it("uses message fallback when response_message missing", async () => {
-      vi.mocked(fetch).mockResolvedValue(
+      vi.mocked(rikFetch).mockResolvedValue(
         jsonResponse(errorResponses.http_400_message_body, 400, "Bad Request"),
       );
 
@@ -328,7 +331,7 @@ describe("EFinancialsClient", () => {
     });
 
     it("uses errors array join when present", async () => {
-      vi.mocked(fetch).mockResolvedValue(
+      vi.mocked(rikFetch).mockResolvedValue(
         jsonResponse(errorResponses.http_422_errors_body, 422, "Unprocessable Entity"),
       );
 
@@ -336,7 +339,7 @@ describe("EFinancialsClient", () => {
     });
 
     it("uses error field when other message fields missing", async () => {
-      vi.mocked(fetch).mockResolvedValue(
+      vi.mocked(rikFetch).mockResolvedValue(
         jsonResponse(errorResponses.http_error_field_body, 400, "Bad Request"),
       );
 
@@ -346,7 +349,7 @@ describe("EFinancialsClient", () => {
     });
 
     it("uses JSON.stringify when body has no known message fields", async () => {
-      vi.mocked(fetch).mockResolvedValue(
+      vi.mocked(rikFetch).mockResolvedValue(
         jsonResponse(errorResponses.http_empty_json_body, 500, "Server Error"),
       );
 
@@ -354,7 +357,7 @@ describe("EFinancialsClient", () => {
     });
 
     it("uses code from JSON body when response_code missing", async () => {
-      vi.mocked(fetch).mockResolvedValue(
+      vi.mocked(rikFetch).mockResolvedValue(
         jsonResponse(errorResponses.http_code_field_body, 500, "Server Error"),
       );
 
@@ -364,7 +367,7 @@ describe("EFinancialsClient", () => {
     });
 
     it("throws HTTP Error when body is not JSON", async () => {
-      vi.mocked(fetch).mockResolvedValue(
+      vi.mocked(rikFetch).mockResolvedValue(
         new Response("plain text error", { status: 502, statusText: "Bad Gateway" }),
       );
 
@@ -374,7 +377,7 @@ describe("EFinancialsClient", () => {
     });
 
     it("logs the cf-ray header when an error response is served via Cloudflare", async () => {
-      vi.mocked(fetch).mockResolvedValue(
+      vi.mocked(rikFetch).mockResolvedValue(
         new Response("<html>Attention Required! | Cloudflare</html>", {
           status: 403,
           statusText: "Forbidden",
@@ -399,19 +402,19 @@ describe("EFinancialsClient", () => {
 
   describe("API-level errors (HTTP OK, response_code !== 0)", () => {
     it("throws when response_code is non-zero", async () => {
-      vi.mocked(fetch).mockResolvedValue(jsonResponse(errorResponses.api_business_error_body));
+      vi.mocked(rikFetch).mockResolvedValue(jsonResponse(errorResponses.api_business_error_body));
 
       await expect(client.get("/v1/x")).rejects.toThrow("API Error 7: Business rule failed");
     });
 
     it("does not throw when response_code is 0", async () => {
-      vi.mocked(fetch).mockResolvedValue(jsonResponse(errorResponses.api_success_with_items));
+      vi.mocked(rikFetch).mockResolvedValue(jsonResponse(errorResponses.api_success_with_items));
 
       await expect(client.get("/v1/x")).resolves.toEqual(errorResponses.api_success_with_items);
     });
 
     it("does not throw when response_code is undefined", async () => {
-      vi.mocked(fetch).mockResolvedValue(jsonResponse(errorResponses.items_numeric));
+      vi.mocked(rikFetch).mockResolvedValue(jsonResponse(errorResponses.items_numeric));
 
       await expect(client.get("/v1/x")).resolves.toEqual(errorResponses.items_numeric);
     });
@@ -419,7 +422,7 @@ describe("EFinancialsClient", () => {
 
   describe("getAllPages", () => {
     it("aggregates items across multiple pages", async () => {
-      vi.mocked(fetch)
+      vi.mocked(rikFetch)
         .mockResolvedValueOnce(jsonResponse(transactionsFixture.pagination_page_1))
         .mockResolvedValueOnce(jsonResponse(transactionsFixture.pagination_page_2))
         .mockResolvedValueOnce(jsonResponse(transactionsFixture.pagination_page_3));
@@ -427,34 +430,34 @@ describe("EFinancialsClient", () => {
       const items = await client.getAllPages<{ id: string }>("/v1/list");
 
       expect(items).toEqual([{ id: "a" }, { id: "b" }, { id: "c" }]);
-      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(3);
-      const urls = vi.mocked(fetch).mock.calls.map((c) => c[0] as string);
+      expect(vi.mocked(rikFetch)).toHaveBeenCalledTimes(3);
+      const urls = vi.mocked(rikFetch).mock.calls.map((c) => c[0] as string);
       expect(urls[0]).toContain("page=1");
       expect(urls[1]).toContain("page=2");
       expect(urls[2]).toContain("page=3");
     });
 
     it("stops after one page when total_pages is 1", async () => {
-      vi.mocked(fetch).mockResolvedValue(jsonResponse(transactionsFixture.single_page_list));
+      vi.mocked(rikFetch).mockResolvedValue(jsonResponse(transactionsFixture.single_page_list));
 
       const items = await client.getAllPages("/v1/list");
 
       expect(items).toEqual(transactionsFixture.single_page_list.items);
-      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(rikFetch)).toHaveBeenCalledTimes(1);
     });
 
     it("returns empty array when items missing or empty", async () => {
-      vi.mocked(fetch).mockResolvedValue(jsonResponse(transactionsFixture.paged_no_items_key));
+      vi.mocked(rikFetch).mockResolvedValue(jsonResponse(transactionsFixture.paged_no_items_key));
 
       await expect(client.getAllPages("/v1/empty")).resolves.toEqual([]);
 
-      vi.mocked(fetch).mockResolvedValue(jsonResponse(transactionsFixture.paged_empty_items));
+      vi.mocked(rikFetch).mockResolvedValue(jsonResponse(transactionsFixture.paged_empty_items));
 
       await expect(client.getAllPages("/v1/empty2")).resolves.toEqual([]);
     });
 
     it("continues pagination when a page omits items but more pages remain", async () => {
-      vi.mocked(fetch)
+      vi.mocked(rikFetch)
         .mockResolvedValueOnce(
           jsonResponse({
             items: [{ id: "first" }],
@@ -477,11 +480,11 @@ describe("EFinancialsClient", () => {
 
       const items = await client.getAllPages<{ id: string }>("/v1/list");
       expect(items).toEqual([{ id: "first" }, { id: "last" }]);
-      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(3);
+      expect(vi.mocked(rikFetch)).toHaveBeenCalledTimes(3);
     });
 
     it("uses loop page when response current_page is zero", async () => {
-      vi.mocked(fetch).mockResolvedValueOnce(
+      vi.mocked(rikFetch).mockResolvedValueOnce(
         jsonResponse({
           items: [{ id: "x" }],
           current_page: 0,
@@ -494,7 +497,7 @@ describe("EFinancialsClient", () => {
     });
 
     it("treats total_pages zero as one page", async () => {
-      vi.mocked(fetch).mockResolvedValueOnce(
+      vi.mocked(rikFetch).mockResolvedValueOnce(
         jsonResponse({
           items: [{ id: "z" }],
           current_page: 1,
@@ -504,11 +507,11 @@ describe("EFinancialsClient", () => {
 
       const items = await client.getAllPages<{ id: string }>("/v1/list");
       expect(items).toEqual([{ id: "z" }]);
-      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(rikFetch)).toHaveBeenCalledTimes(1);
     });
 
     it("stops after maxPages default and logs when API reports more pages", async () => {
-      vi.mocked(fetch).mockImplementation(() =>
+      vi.mocked(rikFetch).mockImplementation(() =>
         Promise.resolve(
           jsonResponse({
             items: [{ id: "loop" }],
@@ -520,7 +523,7 @@ describe("EFinancialsClient", () => {
 
       const items = await client.getAllPages<{ id: string }>("/v1/huge");
 
-      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(100);
+      expect(vi.mocked(rikFetch)).toHaveBeenCalledTimes(100);
       expect(items).toHaveLength(100);
       expect(rootLoggerMocks.warn).toHaveBeenCalledTimes(1);
       expect(rootLoggerMocks.warn.mock.calls[0][0]).toMatchObject({
@@ -540,7 +543,7 @@ describe("EFinancialsClient", () => {
         logger: { info: vi.fn(), warn: logWarn } as unknown as Logger,
       });
 
-      vi.mocked(fetch)
+      vi.mocked(rikFetch)
         .mockResolvedValueOnce(
           jsonResponse({
             items: [{ id: "a" }],
@@ -558,7 +561,7 @@ describe("EFinancialsClient", () => {
 
       const items = await cappedClient.getAllPages<{ id: string }>("/v1/paged");
 
-      expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(rikFetch)).toHaveBeenCalledTimes(2);
       expect(items).toEqual([{ id: "a" }, { id: "b" }]);
       expect(logWarn).toHaveBeenCalledTimes(1);
       expect(logWarn.mock.calls[0][0]).toMatchObject({
@@ -572,19 +575,19 @@ describe("EFinancialsClient", () => {
   });
 
   it("throws network error when fetch rejects and retries are disabled", async () => {
-    vi.mocked(fetch).mockRejectedValueOnce(new TypeError("network down"));
+    vi.mocked(rikFetch).mockRejectedValueOnce(new TypeError("network down"));
 
     await expect(client.get("/v1/x")).rejects.toMatchObject({
       kind: "network",
       name: "EFinancialsApiError",
     });
-    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(rikFetch)).toHaveBeenCalledTimes(1);
   });
 
   describe("EFinancialsApiError and retries", () => {
     describe("structured errors", () => {
       it("exposes http JSON error fields", async () => {
-        vi.mocked(fetch).mockResolvedValue(
+        vi.mocked(rikFetch).mockResolvedValue(
           jsonResponse(errorResponses.http_401_body, 401, "Unauthorized"),
         );
 
@@ -603,7 +606,7 @@ describe("EFinancialsClient", () => {
       });
 
       it("exposes api-level error fields for HTTP 200 with response_code", async () => {
-        vi.mocked(fetch).mockResolvedValue(jsonResponse(errorResponses.api_business_error_body));
+        vi.mocked(rikFetch).mockResolvedValue(jsonResponse(errorResponses.api_business_error_body));
 
         await expect(client.get("/v1/x")).rejects.toMatchObject({
           kind: "api",
@@ -614,7 +617,7 @@ describe("EFinancialsClient", () => {
       });
 
       it("exposes plain HTTP error bodySnippet", async () => {
-        vi.mocked(fetch).mockResolvedValue(
+        vi.mocked(rikFetch).mockResolvedValue(
           new Response("plain text error", { status: 502, statusText: "Bad Gateway" }),
         );
 
@@ -645,7 +648,7 @@ describe("EFinancialsClient", () => {
       });
 
       it("retries on 503 then succeeds", async () => {
-        vi.mocked(fetch)
+        vi.mocked(rikFetch)
           .mockResolvedValueOnce(
             new Response(null, { status: 503, statusText: "Service Unavailable" }),
           )
@@ -657,22 +660,22 @@ describe("EFinancialsClient", () => {
         const p = retryClient.get("/v1/x");
         await vi.runAllTimersAsync();
         await expect(p).resolves.toEqual(transactionsFixture.list_empty);
-        expect(vi.mocked(fetch)).toHaveBeenCalledTimes(3);
+        expect(vi.mocked(rikFetch)).toHaveBeenCalledTimes(3);
       });
 
       it("retries after fetch throws then succeeds", async () => {
-        vi.mocked(fetch)
+        vi.mocked(rikFetch)
           .mockRejectedValueOnce(new TypeError("fetch failed"))
           .mockResolvedValueOnce(jsonResponse(transactionsFixture.list_empty));
 
         const p = retryClient.get("/v1/x");
         await vi.runAllTimersAsync();
         await expect(p).resolves.toEqual(transactionsFixture.list_empty);
-        expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2);
+        expect(vi.mocked(rikFetch)).toHaveBeenCalledTimes(2);
       });
 
       it("does not retry on 409", async () => {
-        vi.mocked(fetch).mockResolvedValue(
+        vi.mocked(rikFetch).mockResolvedValue(
           jsonResponse(errorResponses.http_409_body, 409, "Conflict"),
         );
 
@@ -681,25 +684,25 @@ describe("EFinancialsClient", () => {
           kind: "http",
           httpStatus: 409,
         });
-        expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(rikFetch)).toHaveBeenCalledTimes(1);
       });
 
       it("does not retry on 401", async () => {
-        vi.mocked(fetch).mockResolvedValue(
+        vi.mocked(rikFetch).mockResolvedValue(
           jsonResponse(errorResponses.http_401_body, 401, "Unauthorized"),
         );
 
         const c = new EFinancialsClient({ ...baseConfig, httpMaxRetries: 3 });
         await expect(c.get("/v1/x")).rejects.toMatchObject({ kind: "http", httpStatus: 401 });
-        expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(rikFetch)).toHaveBeenCalledTimes(1);
       });
 
       it("does not retry when HTTP 200 has non-zero response_code", async () => {
-        vi.mocked(fetch).mockResolvedValue(jsonResponse(errorResponses.api_business_error_body));
+        vi.mocked(rikFetch).mockResolvedValue(jsonResponse(errorResponses.api_business_error_body));
 
         const c = new EFinancialsClient({ ...baseConfig, httpMaxRetries: 3 });
         await expect(c.get("/v1/x")).rejects.toMatchObject({ kind: "api", apiCode: 7 });
-        expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(rikFetch)).toHaveBeenCalledTimes(1);
       });
     });
   });

@@ -10,6 +10,7 @@ import {
 } from "./api-error.js";
 import { type AuthConfig, generateAuthHeaders, rikRequestTimeoutMsFromEnv } from "./auth.js";
 import { logger as defaultLogger } from "./logger.js";
+import { rikFetch } from "./rik-http.js";
 
 export { EFinancialsApiError, RETRYABLE_HTTP_STATUSES } from "./api-error.js";
 
@@ -142,7 +143,9 @@ export class EFinancialsClient {
 
         let response: Response;
         try {
-          response = await fetch(urlString, {
+          // node:https transport, not fetch: undici's non-removable
+          // Sec-Fetch-Mode header trips Cloudflare in front of the RIK API.
+          response = await rikFetch(urlString, {
             method,
             headers,
             body: body ? JSON.stringify(body) : undefined,

@@ -90,7 +90,8 @@ flowchart LR
 1. **`X-AUTH-QUERYTIME`** — UTC timestamp, one-second precision, no milliseconds.
 2. **`X-AUTH-KEY`** — `{RIK_API_KEY_PUBLIC}:{signature}` where `signature` is **Base64(HMAC-SHA-384)** over `{RIK_API_KEY_ID}:{X-AUTH-QUERYTIME}:{urlPath}`.
 3. `urlPath` is the **path only** (e.g. `/v1/transactions`), no query string.
-4. **`User-Agent: e-financials-mcp/1.0 (+https://github.com/werkstatt-jasper/e-financials-mcp)`** — descriptive UA; the production API sits behind Cloudflare, which can 403-challenge generic clients (Node's default UA is `node`). Cloudflare-served error responses are logged with their `cf-ray` ID.
+4. **`User-Agent: e-financials-mcp/1.0 (+https://github.com/werkstatt-jasper/e-financials-mcp)`** — descriptive UA instead of Node's generic `node` default.
+5. Requests use a plain **`node:https`** transport ([`src/rik-http.ts`](src/rik-http.ts)), not global `fetch`: undici fetch's non-removable `Sec-Fetch-Mode: cors` header makes Cloudflare (in front of the production API) 403-challenge requests from datacenter IPs. Cloudflare-served error responses are logged with their `cf-ray` ID.
 
 ## MCP surface
 

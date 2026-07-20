@@ -18,6 +18,7 @@
     "./logger": "./dist/logger.js",
     "./api-error": "./dist/api-error.js",
     "./rik-base-url": "./dist/rik-base-url.js",
+    "./rik-http": "./dist/rik-http.js",
     "./rik-credential-parse": "./dist/rik-credential-parse.js",
     "./upload-file-path": "./dist/upload-file-path.js",
     "./types/*": "./dist/types/*.js",
