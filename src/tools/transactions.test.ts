@@ -323,6 +323,23 @@ describe("transaction tools", () => {
     expect(data.message).toContain("55");
   });
 
+  it("upload_transaction_file accepts inline base64 payload", async () => {
+    vi.mocked(client.put).mockResolvedValue({ ...transactionsFixture.upload_put_ok } as never);
+    const b64 = Buffer.from("%PDF-1.4").toString("base64");
+    const result = await tools.upload_transaction_file.handler({
+      id: 55,
+      file_path: `base64:${b64}`,
+    });
+    expect(readFile).not.toHaveBeenCalled();
+    expect(client.put).toHaveBeenCalledWith("/v1/transactions/55/document_user", {
+      name: "upload.pdf",
+      contents: b64,
+    });
+    const data = parseToolJson(result) as { success: boolean; message: string };
+    expect(data.success).toBe(true);
+    expect(data.message).toContain("upload.pdf");
+  });
+
   it("delete_transaction_file deletes document_user", async () => {
     vi.mocked(client.delete).mockResolvedValue({ response_code: 0 } as never);
     await tools.delete_transaction_file.handler({ id: 12 });
