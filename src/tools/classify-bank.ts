@@ -16,6 +16,7 @@ import {
 import { suggestBookingFromHistory } from "../banking/supplier-history.js";
 import type { EFinancialsClient } from "../client.js";
 import { createPurchaseInvoiceWithRepair } from "../invoices/create-purchase-invoice.js";
+import { registerPurchaseInvoiceWithRepair } from "../invoices/register-purchase-invoice.js";
 import type { PurchaseInvoice, SalesInvoice } from "../types/invoice.js";
 import type { Transaction } from "../types/transaction.js";
 import { optionalPositiveInt, optionalYmd, parseToolArgs } from "../validation/tool-args.js";
@@ -305,7 +306,10 @@ async function applyGroups(
       try {
         const created = await createPurchaseInvoiceWithRepair(client, createInput);
         invoiceId = created.id;
-        await client.patch(`/v1/purchase_invoices/${invoiceId}/register`);
+        await registerPurchaseInvoiceWithRepair(client, {
+          id: invoiceId,
+          preserve_existing_totals: true,
+        });
 
         // Re-check txn before confirm (stale race)
         const fresh = (await client.get<Transaction>(
