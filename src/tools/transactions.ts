@@ -156,7 +156,8 @@ export function createTransactionTools(client: EFinancialsClient) {
     },
 
     get_transaction: {
-      description: "Get details of a specific transaction by ID",
+      description:
+        "Get a bank transaction by ID (incoming type C or outgoing type D). The JSON may include read-only items[] relation rows (relation_table, relation_id, amount, accounts_id). To add relations and confirm, use register_transaction with a full distributions array — the API does not support incremental draft rows.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -233,7 +234,7 @@ export function createTransactionTools(client: EFinancialsClient) {
 
     update_transaction: {
       description:
-        "Update a transaction to assign a client/supplier or change the account. Only works on PROJECT status transactions.",
+        "Update transaction metadata only (clients_id, accounts_id, description) on PROJECT drafts. Does not add or change distribution/relation rows — that is register_transaction (e-arveldaja UI: Add a row under transaction relations, then Save and confirm). Set clients_id before register when missing; the API often rejects confirmation with buyer/supplier missing.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -390,7 +391,7 @@ export function createTransactionTools(client: EFinancialsClient) {
 
     register_transaction: {
       description:
-        "Register (post to the books) a transaction. The API expects a JSON array of distribution rows (OpenAPI TransactionsDistributions): each row requires related_table and amount; optional related_id and related_sub_id (e.g. dimension when related_table is accounts). Usually applies to draft (PROJECT) transactions that are fully categorized. CONFIRMED/VOID transitions follow RIK rules — see e-Financials API documentation.",
+        'Register (confirm/post) a bank transaction with distribution rows. API equivalent of the e-arveldaja UI "Add a row" under transaction relations (purchase invoices, accounts, etc.) plus "Save and confirm" — for incoming (type C) and outgoing (type D). Pass the complete distributions array in one call; there is no incremental add-row endpoint (Transactions.items is read-only). Each row requires related_table and amount; related_id is required in practice. related_table values: "accounts" (related_id = account id; related_sub_id = dimension id when the account has dimensions), "purchase_invoices", "sale_invoices". If clients_id is missing, set it with update_transaction first (API often rejects with buyer/supplier missing unless an invoice distribution supplies the party). Usually PROJECT drafts. CONFIRMED/VOID follow RIK rules.',
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -401,13 +402,14 @@ export function createTransactionTools(client: EFinancialsClient) {
           distributions: {
             type: "array",
             description:
-              "Distribution rows for PATCH .../register (OpenAPI array of TransactionsDistribution)",
+              'Full list of distribution rows for PATCH .../register (OpenAPI TransactionsDistributions). Example invoice: [{related_table:"purchase_invoices",related_id:123,amount:59.94}]. Example account with dimension: [{related_table:"accounts",related_id:1360,related_sub_id:12637323,amount:100}]',
             items: {
               type: "object",
               properties: {
                 related_table: {
                   type: "string",
-                  description: "Related table name (OpenAPI required)",
+                  description:
+                    'Related object table: "accounts", "purchase_invoices", or "sale_invoices"',
                 },
                 amount: {
                   type: "number",
@@ -415,12 +417,13 @@ export function createTransactionTools(client: EFinancialsClient) {
                 },
                 related_id: {
                   type: "number",
-                  description: "Related object ID (e.g. account number)",
+                  description:
+                    "Related object ID (account id, purchase invoice id, or sale invoice id). Required in practice.",
                 },
                 related_sub_id: {
                   type: "number",
                   description:
-                    "Related sub-ID (e.g. accounts_dimensions_id when related_table is accounts)",
+                    "Required when related_table is accounts and the account has dimensions (accounts_dimensions_id). Do not put the dimension id in related_id.",
                 },
               },
               required: ["related_table", "amount"],

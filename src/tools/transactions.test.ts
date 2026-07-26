@@ -264,6 +264,30 @@ describe("transaction tools", () => {
     expect(parseToolJson(result)).toEqual({ response_code: 0 });
   });
 
+  it("register_transaction accepts purchase_invoices distribution rows", async () => {
+    vi.mocked(client.patch).mockResolvedValue({ response_code: 0 } as never);
+
+    const distributions = [{ related_table: "purchase_invoices", amount: 59.94, related_id: 123 }];
+    await tools.register_transaction.handler({ id: 88, distributions });
+
+    expect(client.patch).toHaveBeenCalledWith("/v1/transactions/88/register", distributions);
+  });
+
+  it("register_transaction description maps UI add-row and related_table values", () => {
+    const { description, inputSchema } = tools.register_transaction;
+    expect(description).toMatch(/Add a row/i);
+    expect(description).toMatch(/purchase_invoices/);
+    expect(description).toMatch(/sale_invoices/);
+    expect(description).toMatch(/clients_id/);
+    const relatedTable = inputSchema.properties.distributions.items.properties.related_table;
+    expect(relatedTable.description).toMatch(/purchase_invoices/);
+  });
+
+  it("update_transaction description clarifies metadata-only vs distributions", () => {
+    expect(tools.update_transaction.description).toMatch(/Does not add or change distribution/i);
+    expect(tools.update_transaction.description).toMatch(/register_transaction/);
+  });
+
   it("invalidate_transaction patches invalidate without body", async () => {
     vi.mocked(client.patch).mockResolvedValue({ response_code: 0 } as never);
 
