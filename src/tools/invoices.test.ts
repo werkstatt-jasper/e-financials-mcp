@@ -20,6 +20,20 @@ describe("invoice tools", () => {
     vi.mocked(readFile).mockReset();
   });
 
+  it("validate_invoice_data returns structured validity without API calls", async () => {
+    const result = await tools.validate_invoice_data.handler({
+      total_net: 100,
+      total_vat: 24,
+      total_gross: 124,
+      items: [{ total_net_price: 100, vat_rate_dropdown: "24" }],
+      invoice_date: "2025-08-01",
+    });
+    expect(client.get).not.toHaveBeenCalled();
+    const data = parseToolJson(result) as { valid: boolean; errors: string[] };
+    expect(data.valid).toBe(true);
+    expect(data.errors).toEqual([]);
+  });
+
   it("list_sales_invoices returns items and pagination", async () => {
     vi.mocked(client.get).mockResolvedValue({ ...invoicesFixture.sales_list_paginated } as never);
 
@@ -724,12 +738,65 @@ describe("invoice tools", () => {
     expect(parseToolJson(result)).toEqual({ response_code: 0 });
   });
 
-  it("register_purchase_invoice patches register without body", async () => {
-    vi.mocked(client.patch).mockResolvedValue({ response_code: 0 } as never);
+  it("register_purchase_invoice repairs totals then registers", async () => {
+    vi.mocked(client.get).mockImplementation(async (path: string) => {
+      if (path === "/v1/vat_info") {
+        return { vat_number: "EE1", tax_refnumber: "1" };
+      }
+      return {
+        id: 42,
+        vat_price: 0,
+        gross_price: 100,
+        items: [{ total_net_price: 100, vat_amount: 24 }],
+      };
+    });
+    vi.mocked(client.patch).mockResolvedValue({ status: "CONFIRMED" } as never);
 
     const result = await tools.register_purchase_invoice.handler({ id: 42 });
+    expect(client.patch).toHaveBeenCalledWith(
+      "/v1/purchase_invoices/42",
+      expect.objectContaining({ vat_price: 24, gross_price: 124 }),
+    );
     expect(client.patch).toHaveBeenCalledWith("/v1/purchase_invoices/42/register");
-    expect(parseToolJson(result)).toEqual({ response_code: 0 });
+    expect(parseToolJson(result)).toEqual({
+      success: true,
+      id: 42,
+      repaired: true,
+      response: { status: "CONFIRMED" },
+    });
+  });
+
+  it("register_purchase_invoice honors preserve_existing_totals", async () => {
+    vi.mocked(client.get).mockImplementation(async (path: string) => {
+      if (path === "/v1/vat_info") {
+        return { vat_number: "EE1", tax_refnumber: "1" };
+      }
+      return {
+        id: 42,
+        vat_price: 0,
+        gross_price: 100,
+        items: [{ total_net_price: 100, vat_amount: 24 }],
+      };
+    });
+    vi.mocked(client.patch).mockResolvedValue({ status: "CONFIRMED" } as never);
+
+    const result = await tools.register_purchase_invoice.handler({
+      id: 42,
+      preserve_existing_totals: true,
+    });
+    expect(client.patch).toHaveBeenCalledTimes(1);
+    expect(client.patch).toHaveBeenCalledWith("/v1/purchase_invoices/42/register");
+    expect((parseToolJson(result) as { repaired: boolean }).repaired).toBe(false);
+  });
+
+  it("validate_invoice_data maps null vat_rate_dropdown to undefined", async () => {
+    const result = await tools.validate_invoice_data.handler({
+      total_net: 10,
+      total_vat: 0,
+      total_gross: 10,
+      items: [{ total_net_price: 10, vat_rate_dropdown: null }],
+    });
+    expect((parseToolJson(result) as { valid: boolean }).valid).toBe(true);
   });
 
   it("invalidate_purchase_invoice patches invalidate without body", async () => {

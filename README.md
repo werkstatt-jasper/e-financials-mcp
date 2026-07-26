@@ -157,6 +157,7 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 | `get_sales_invoice` | One sales invoice. |
 | `get_purchase_invoice` | One purchase invoice. |
 | `create_sales_invoice` | Draft sales invoice. |
+| `validate_invoice_data` | Read-only pre-booking checks (totals, dates, VAT rates, FX). Free-tier on hosted SaaS. |
 | `create_purchase_invoice` | Draft purchase invoice with VAT defaults + create-then-repair totals. Single-line params or `items[]`; non-EUR needs `currency_rate`. Supports `reversed_vat_id` (7 = non-EU, 4 = EU). |
 | `update_sales_invoice` | PATCH sales draft. |
 | `delete_sales_invoice` | DELETE sales invoice. |
@@ -171,7 +172,7 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 | `deliver_sales_invoice` | Send e-invoice/email. |
 | `update_purchase_invoice` | PATCH purchase draft. Supports `reversed_vat_id` (applied to every existing line item). |
 | `delete_purchase_invoice` | DELETE purchase invoice. |
-| `register_purchase_invoice` | Confirm purchase invoice. |
+| `register_purchase_invoice` | Confirm purchase invoice after optional vat/gross repair from item sums. |
 | `invalidate_purchase_invoice` | Reverse purchase confirmation. |
 | `get_purchase_invoice_user_file` | User-uploaded file. |
 | `upload_purchase_invoice_file` | Upload file (path or inline base64; max 10 MiB). |

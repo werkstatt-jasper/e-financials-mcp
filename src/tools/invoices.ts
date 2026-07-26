@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { EFinancialsClient } from "../client.js";
 import { createPurchaseInvoiceWithRepair } from "../invoices/create-purchase-invoice.js";
+import { registerPurchaseInvoiceWithRepair } from "../invoices/register-purchase-invoice.js";
+import { validateInvoiceData } from "../invoices/validate-invoice-data.js";
 import { resolveFileInput } from "../resolve-file-input.js";
 import type {
   CreatePurchaseInvoiceParams,
@@ -51,6 +53,29 @@ const listUnpaidInvoicesSchema = z.object({
 });
 
 const invoiceIdSchema = z.object({ id: positiveInt });
+
+const registerPurchaseInvoiceSchema = z.object({
+  id: positiveInt,
+  preserve_existing_totals: optionalBoolean,
+});
+
+const validateInvoiceItemSchema = z.object({
+  total_net_price: optionalNumber,
+  vat_rate_dropdown: z.union([z.string(), z.number()]).nullish(),
+  vat_rate: optionalNumber,
+});
+
+const validateInvoiceDataSchema = z.object({
+  total_net: z.coerce.number(),
+  total_vat: z.coerce.number(),
+  total_gross: z.coerce.number(),
+  items: z.array(validateInvoiceItemSchema).optional(),
+  invoice_date: optionalString,
+  due_date: optionalString,
+  cl_currencies_id: optionalString,
+  currency_rate: optionalNumber,
+  base_net_price: optionalNumber,
+});
 
 const invoiceRowSchema = z.object({
   description: z.string().min(1),
@@ -526,6 +551,56 @@ export function createInvoiceTools(client: EFinancialsClient) {
                 null,
                 2,
               ),
+            },
+          ],
+        };
+      },
+    },
+
+    validate_invoice_data: {
+      description:
+        "Read-only pre-booking checks for invoice totals, line nets/VAT, calendar dates, Estonian standard VAT rate vs invoice date, and foreign-currency rate guardrails. Returns { valid, errors[], warnings[], summary }. Does not call the RIK API.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          total_net: { type: "number", description: "Invoice total net" },
+          total_vat: { type: "number", description: "Invoice total VAT" },
+          total_gross: { type: "number", description: "Invoice total gross" },
+          items: {
+            type: "array",
+            description: "Optional lines with total_net_price and vat_rate_dropdown / vat_rate",
+            items: { type: "object" },
+          },
+          invoice_date: { type: "string", description: "YYYY-MM-DD" },
+          due_date: { type: "string", description: "YYYY-MM-DD" },
+          cl_currencies_id: { type: "string", description: "Currency code (default EUR)" },
+          currency_rate: { type: "number", description: "EUR per 1 foreign unit" },
+          base_net_price: { type: "number", description: "EUR-equivalent net" },
+        },
+        required: ["total_net", "total_vat", "total_gross"],
+      },
+      handler: async (params: unknown) => {
+        const args = parseToolArgs(validateInvoiceDataSchema, params);
+        const result = validateInvoiceData({
+          total_net: args.total_net,
+          total_vat: args.total_vat,
+          total_gross: args.total_gross,
+          items: args.items?.map((item) => ({
+            total_net_price: item.total_net_price,
+            vat_rate_dropdown: item.vat_rate_dropdown ?? undefined,
+            vat_rate: item.vat_rate,
+          })),
+          invoice_date: args.invoice_date,
+          due_date: args.due_date,
+          cl_currencies_id: args.cl_currencies_id,
+          currency_rate: args.currency_rate,
+          base_net_price: args.base_net_price,
+        });
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify(result, null, 2),
             },
           ],
         };
@@ -1146,7 +1221,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
 
     register_purchase_invoice: {
       description:
-        "Register (post to the books) a purchase invoice. Usually applies to draft invoices (PROJECT) that are ready to be confirmed (CONFIRMED). The API accepts an empty PATCH body. CONFIRMED/VOID transitions follow RIK rules — see e-Financials API documentation.",
+        "Register (post to the books) a purchase invoice. GETs the draft, repairs invoice-level vat_price/gross_price from item sums when they drifted (unless preserve_existing_totals), then PATCH .../register. Usually PROJECT drafts. CONFIRMED/VOID follow RIK rules.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -1154,17 +1229,34 @@ export function createInvoiceTools(client: EFinancialsClient) {
             type: "number",
             description: "Purchase invoice ID",
           },
+          preserve_existing_totals: {
+            type: "boolean",
+            description:
+              "When true, skip totals repair if gross_price (and vat_price for VAT-registered companies) is already set",
+          },
         },
         required: ["id"],
       },
       handler: async (params: unknown) => {
-        const args = parseToolArgs(invoiceIdSchema, params);
-        const response = await client.patch(`/v1/purchase_invoices/${args.id}/register`);
+        const args = parseToolArgs(registerPurchaseInvoiceSchema, params);
+        const result = await registerPurchaseInvoiceWithRepair(client, {
+          id: args.id,
+          preserve_existing_totals: args.preserve_existing_totals,
+        });
         return {
           content: [
             {
               type: "text" as const,
-              text: JSON.stringify(response, null, 2),
+              text: JSON.stringify(
+                {
+                  success: true,
+                  id: result.id,
+                  repaired: result.repaired,
+                  response: result.response,
+                },
+                null,
+                2,
+              ),
             },
           ],
         };
