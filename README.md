@@ -249,6 +249,14 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 | `match_transaction_to_supplier` | Word overlap scoring vs suppliers. |
 | `financial_summary` | Month rollup (default: current month). |
 
+### Financial statements
+
+| Tool | Description |
+|------|-------------|
+| `compute_trial_balance` | Trial balance from registered journal postings (optional date window; EUR base). |
+| `compute_balance_sheet` | Balance sheet as of optional `date_to` (Varad / Kohustused / Omakapital + open P&L). |
+| `compute_profit_and_loss` | P&L for required `date_from` / `date_to` (Tulud / Kulud → `net_profit`). |
+
 ### Bank reconciliation & classify
 
 | Tool | Description |

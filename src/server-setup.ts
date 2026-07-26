@@ -19,6 +19,7 @@ import { createAccountTools } from "./tools/accounts.js";
 import { createBankReconciliationTools } from "./tools/bank-reconciliation.js";
 import { createClassifyBankTools } from "./tools/classify-bank.js";
 import { createClientTools } from "./tools/clients.js";
+import { createFinancialStatementTools } from "./tools/financial-statements.js";
 import { createInvoiceSettingsTools } from "./tools/invoiceSettings.js";
 import { createInvoiceTools } from "./tools/invoices.js";
 import { createJournalTools } from "./tools/journals.js";
@@ -52,6 +53,7 @@ export function buildAllTools(client: EFinancialsClient): ToolRecord {
     ...createAccountTools(client),
     ...createReferenceTools(client),
     ...createReportTools(client),
+    ...createFinancialStatementTools(client),
     ...createBankReconciliationTools(client),
     ...createClassifyBankTools(client),
   };
