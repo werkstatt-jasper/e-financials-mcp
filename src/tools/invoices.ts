@@ -1,7 +1,7 @@
-import { readFile } from "node:fs/promises";
-import { basename } from "node:path";
 import { z } from "zod";
 import type { EFinancialsClient } from "../client.js";
+import { createPurchaseInvoiceWithRepair } from "../invoices/create-purchase-invoice.js";
+import { resolveFileInput } from "../resolve-file-input.js";
 import type {
   CreatePurchaseInvoiceParams,
   CreateSalesInvoiceParams,
@@ -9,7 +9,6 @@ import type {
   SalesInvoice,
 } from "../types/invoice.js";
 import type { ApiFile } from "../types/journal.js";
-import { resolveUploadFilePath } from "../upload-file-path.js";
 import {
   optionalBoolean,
   optionalNumber,
@@ -76,21 +75,45 @@ const createSalesInvoiceSchema = z.object({
   number_suffix: optionalString,
 });
 
+const purchaseInvoiceItemSchema = z.object({
+  custom_title: optionalString,
+  amount: optionalNumber,
+  unit_net_price: optionalNumber,
+  total_net_price: optionalNumber,
+  cl_purchase_articles_id: optionalPositiveInt,
+  purchase_accounts_dimensions_id: optionalPositiveInt,
+  purchase_accounts_id: optionalPositiveInt,
+  vat_rate: optionalNumber,
+  vat_rate_dropdown: optionalString,
+  vat_accounts_id: optionalPositiveInt,
+  cl_vat_articles_id: optionalPositiveInt,
+  reversed_vat_id: optionalPositiveInt,
+  project_no_vat_gross_price: optionalNumber,
+  base_net_price: optionalNumber,
+  base_vat_price: optionalNumber,
+  base_gross_price: optionalNumber,
+});
+
 const createPurchaseInvoiceSchema = z.object({
   clients_id: positiveInt,
   client_name: z.string().min(1),
   invoice_no: z.string().min(1),
   invoice_date: ymdDateString,
   term_days: optionalPositiveInt,
-  total_amount: z.coerce.number(),
+  total_amount: z.coerce.number().optional(),
   vat_amount: optionalNumber,
   cl_currencies_id: optionalString,
+  currency_rate: optionalNumber,
   description: optionalString,
   purchase_article_id: optionalPositiveInt,
   purchase_accounts_dimensions_id: optionalPositiveInt,
   vat_rate: optionalNumber,
   vat_accounts_id: optionalPositiveInt,
   reversed_vat_id: optionalPositiveInt,
+  items: z.array(purchaseInvoiceItemSchema).optional(),
+  base_net_price: optionalNumber,
+  base_vat_price: optionalNumber,
+  base_gross_price: optionalNumber,
 });
 
 const updateSalesInvoiceSchema = z.object({
@@ -511,7 +534,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
 
     create_purchase_invoice: {
       description:
-        "Create a new purchase invoice draft. The invoice will be created with PROJECT status (not registered). Creates a single line item from the total amount.",
+        "Create a purchase invoice draft (PROJECT), apply VAT defaults, then repair invoice-level vat_price/gross_price from line items (create-then-repair). Accepts single-line friendly params or an items[] array. Non-EUR requires currency_rate. No-VAT lines use vat_rate_dropdown '-'.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -537,15 +560,20 @@ export function createInvoiceTools(client: EFinancialsClient) {
           },
           total_amount: {
             type: "number",
-            description: "Total invoice amount (including VAT)",
+            description: "Total invoice amount including VAT (required unless items[] is provided)",
           },
           vat_amount: {
             type: "number",
-            description: "VAT amount (default: 0)",
+            description:
+              "Explicit VAT amount (wins for payment matching when set with total_amount)",
           },
           cl_currencies_id: {
             type: "string",
             description: "Currency code (default: EUR)",
+          },
+          currency_rate: {
+            type: "number",
+            description: "EUR per 1 unit of foreign currency (required when currency is not EUR)",
           },
           description: {
             type: "string",
@@ -563,60 +591,40 @@ export function createInvoiceTools(client: EFinancialsClient) {
           },
           vat_rate: {
             type: "number",
-            description: "VAT rate percentage (default: 0)",
+            description: "VAT rate percentage (0 / omit → RIK '-' no-VAT line)",
           },
           vat_accounts_id: {
             type: "number",
             description:
-              "VAT account ID. Required when vat_rate > 0. Use get_vat_info or list_sale_articles to find available VAT accounts.",
+              "VAT account ID. Auto-filled from purchase articles / defaults when omitted.",
           },
           reversed_vat_id: {
             type: "number",
             description:
               "KMD (VAT declaration) classification for reverse-charge purchases. Use 7 for non-EU suppliers (KMD line 7: '0% Other purchases of goods 24% (KMD 7)'), 4 for intra-community EU acquisitions (KMD line 4). Omit for regular Estonian purchases.",
           },
+          items: {
+            type: "array",
+            description: "Optional multi-line items (overrides single-line friendly params)",
+            items: { type: "object" },
+          },
         },
-        required: ["clients_id", "client_name", "invoice_no", "invoice_date", "total_amount"],
+        required: ["clients_id", "client_name", "invoice_no", "invoice_date"],
       },
       handler: async (params: unknown) => {
-        const paramsParsed = parseToolArgs(
-          createPurchaseInvoiceSchema,
-          params,
-        ) as CreatePurchaseInvoiceParams;
-        // Calculate net price from gross and VAT
-        const grossPrice = paramsParsed.total_amount;
-        const vatPrice = paramsParsed.vat_amount ?? 0;
-        const netPrice = grossPrice - vatPrice;
-
-        // Map friendly param names to API field names
-        const apiPayload = {
-          clients_id: paramsParsed.clients_id,
-          client_name: paramsParsed.client_name,
-          number: paramsParsed.invoice_no,
-          create_date: paramsParsed.invoice_date,
-          journal_date: paramsParsed.invoice_date,
-          term_days: paramsParsed.term_days ?? 0,
-          gross_price: grossPrice,
-          vat_price: vatPrice,
-          cl_currencies_id: paramsParsed.cl_currencies_id ?? "EUR",
-          notes: paramsParsed.description,
-          items: [
-            {
-              custom_title: paramsParsed.description || "Purchase",
-              amount: 1,
-              unit_net_price: netPrice,
-              total_net_price: netPrice,
-              cl_purchase_articles_id: paramsParsed.purchase_article_id ?? 39,
-              purchase_accounts_dimensions_id: paramsParsed.purchase_accounts_dimensions_id,
-              vat_rate_dropdown: String(paramsParsed.vat_rate ?? 0),
-              vat_accounts_id: paramsParsed.vat_accounts_id,
-              cl_vat_articles_id: paramsParsed.vat_rate ? 1 : undefined,
-              cl_fringe_benefits_id: 1,
-              reversed_vat_id: paramsParsed.reversed_vat_id,
-            },
-          ],
-        };
-        const response = await client.post<PurchaseInvoice>("/v1/purchase_invoices", apiPayload);
+        const paramsParsed = parseToolArgs(createPurchaseInvoiceSchema, params);
+        if (paramsParsed.total_amount == null && !paramsParsed.items?.length) {
+          throw new Error("total_amount is required when items are omitted");
+        }
+        const result = await createPurchaseInvoiceWithRepair(client, {
+          ...(paramsParsed as CreatePurchaseInvoiceParams),
+          total_amount: paramsParsed.total_amount,
+          items: paramsParsed.items,
+          currency_rate: paramsParsed.currency_rate,
+          base_net_price: paramsParsed.base_net_price,
+          base_vat_price: paramsParsed.base_vat_price,
+          base_gross_price: paramsParsed.base_gross_price,
+        });
         return {
           content: [
             {
@@ -625,8 +633,9 @@ export function createInvoiceTools(client: EFinancialsClient) {
                 {
                   success: true,
                   message: "Purchase invoice draft created",
-                  id: response.id,
-                  response,
+                  id: result.id,
+                  repaired: result.repaired,
+                  response: result.response,
                 },
                 null,
                 2,
@@ -874,7 +883,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
 
     upload_sales_invoice_user_file: {
       description:
-        "Upload a file to a sales invoice (PUT .../document_user). File is read from disk, base64-encoded, sent as OpenAPI ApiFile.",
+        "Upload a file to a sales invoice (PUT .../document_user). Accepts a local path or inline base64:<data> / base64:<ext>:<data> (max 10 MiB). Sent as OpenAPI ApiFile.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -885,17 +894,15 @@ export function createInvoiceTools(client: EFinancialsClient) {
           file_path: {
             type: "string",
             description:
-              "Local path to the file to upload. If MCP_FILE_UPLOAD_ROOT is set, use a path relative to that directory (absolute paths are rejected). Otherwise any readable path is allowed.",
+              "Local path or base64:<data> / base64:<ext>:<data>. If MCP_FILE_UPLOAD_ROOT is set, path inputs must be relative to that directory.",
           },
         },
         required: ["id", "file_path"],
       },
       handler: async (params: unknown) => {
         const args = parseToolArgs(uploadSalesInvoiceUserFileSchema, params);
-        const resolvedPath = await resolveUploadFilePath(args.file_path);
-        const fileBuffer = await readFile(resolvedPath);
-        const base64Content = fileBuffer.toString("base64");
-        const filename = basename(resolvedPath);
+        const { buffer, filename } = await resolveFileInput(args.file_path);
+        const base64Content = buffer.toString("base64");
 
         const response = await client.put(`/v1/sale_invoices/${args.id}/document_user`, {
           name: filename,
@@ -1248,7 +1255,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
 
     upload_purchase_invoice_file: {
       description:
-        "Upload a PDF or other file attachment to a purchase invoice. The file will be base64-encoded and sent to the API.",
+        "Upload a PDF or other file attachment to a purchase invoice. Accepts a local path or inline base64:<data> / base64:<ext>:<data> (max 10 MiB).",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -1259,31 +1266,15 @@ export function createInvoiceTools(client: EFinancialsClient) {
           file_path: {
             type: "string",
             description:
-              "Local path to the file to upload. If MCP_FILE_UPLOAD_ROOT is set, use a path relative to that directory (absolute paths are rejected). Otherwise any readable path is allowed.",
+              "Local path or base64:<data> / base64:<ext>:<data>. If MCP_FILE_UPLOAD_ROOT is set, path inputs must be relative to that directory.",
           },
         },
         required: ["invoice_id", "file_path"],
       },
       handler: async (params: unknown) => {
         const args = parseToolArgs(uploadPurchaseInvoiceFileSchema, params);
-        // Read file and encode as base64
-        const resolvedPath = await resolveUploadFilePath(args.file_path);
-        const fileBuffer = await readFile(resolvedPath);
-        const base64Content = fileBuffer.toString("base64");
-        const filename = basename(resolvedPath);
-
-        // Determine MIME type from extension
-        const ext = filename.split(".").pop()?.toLowerCase();
-        const mimeTypes: Record<string, string> = {
-          pdf: "application/pdf",
-          png: "image/png",
-          jpg: "image/jpeg",
-          jpeg: "image/jpeg",
-          gif: "image/gif",
-          xml: "application/xml",
-          txt: "text/plain",
-        };
-        const _mimeType = mimeTypes[ext || ""] || "application/octet-stream";
+        const { buffer, filename } = await resolveFileInput(args.file_path);
+        const base64Content = buffer.toString("base64");
 
         const response = await client.put(
           `/v1/purchase_invoices/${args.invoice_id}/document_user`,

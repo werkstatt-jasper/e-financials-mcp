@@ -130,7 +130,7 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 | `register_transaction` | Confirm with full `distributions[]` (`accounts` / `purchase_invoices` / `sale_invoices`). UI equivalent of Add a row + Save and confirm. |
 | `invalidate_transaction` | Reverse registration. |
 | `get_transaction_file` | GET attached file. |
-| `upload_transaction_file` | Upload file from local path. |
+| `upload_transaction_file` | Upload file from local path or `base64:<data>` / `base64:<ext>:<data>` (max 10 MiB). |
 | `delete_transaction_file` | DELETE attached file. |
 
 ### Clients
@@ -157,7 +157,7 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 | `get_sales_invoice` | One sales invoice. |
 | `get_purchase_invoice` | One purchase invoice. |
 | `create_sales_invoice` | Draft sales invoice. |
-| `create_purchase_invoice` | Draft purchase invoice. Supports `reversed_vat_id` for KMD reverse-charge classification (7 = non-EU, 4 = EU intra-community). |
+| `create_purchase_invoice` | Draft purchase invoice with VAT defaults + create-then-repair totals. Single-line params or `items[]`; non-EUR needs `currency_rate`. Supports `reversed_vat_id` (7 = non-EU, 4 = EU). |
 | `update_sales_invoice` | PATCH sales draft. |
 | `delete_sales_invoice` | DELETE sales invoice. |
 | `register_sales_invoice` | Confirm sales invoice. |
@@ -165,7 +165,7 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 | `get_sales_invoice_xml` | System e-invoice XML. |
 | `get_sales_invoice_pdf_system` | System PDF. |
 | `get_sales_invoice_user_file` | User-uploaded file. |
-| `upload_sales_invoice_user_file` | Upload file. |
+| `upload_sales_invoice_user_file` | Upload file (path or inline base64; max 10 MiB). |
 | `delete_sales_invoice_user_file` | Delete user file. |
 | `get_sales_invoice_delivery_options` | Delivery options (e-invoice/email). |
 | `deliver_sales_invoice` | Send e-invoice/email. |
@@ -174,7 +174,7 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 | `register_purchase_invoice` | Confirm purchase invoice. |
 | `invalidate_purchase_invoice` | Reverse purchase confirmation. |
 | `get_purchase_invoice_user_file` | User-uploaded file. |
-| `upload_purchase_invoice_file` | Upload file. |
+| `upload_purchase_invoice_file` | Upload file (path or inline base64; max 10 MiB). |
 | `delete_purchase_invoice_user_file` | Delete user file. |
 
 ### Invoice settings
@@ -213,7 +213,7 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 | `register_journal` | Register journal. |
 | `invalidate_journal` | Reverse registration. |
 | `get_journal_file` | GET attached file. |
-| `upload_journal_file` | Upload file. |
+| `upload_journal_file` | Upload file (path or inline base64; max 10 MiB). |
 | `delete_journal_file` | Delete file. |
 
 ### Accounts

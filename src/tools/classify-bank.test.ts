@@ -106,9 +106,25 @@ describe("classify_bank_transactions", () => {
           },
         ];
       }
+      if (path === "/v1/purchase_articles") {
+        return [];
+      }
       return [];
     });
     vi.mocked(client.get).mockImplementation(async (path: string) => {
+      if (path === "/v1/vat_info") {
+        return { vat_number: "EE1", tax_refnumber: "1" };
+      }
+      if (path.startsWith("/v1/purchase_invoices/")) {
+        const id = Number(path.split("/")[3]);
+        return {
+          id,
+          items: [{ total_net_price: 10, vat_amount: 0 }],
+          status: "PROJECT",
+          clients_id: 20,
+          cl_currencies_id: "EUR",
+        };
+      }
       const id = Number(path.split("/").pop());
       if (id === 1 || id === 2 || id === 4) {
         return projectTx({ id });
@@ -126,6 +142,9 @@ describe("classify_bank_transactions", () => {
       }
       if (id === 12) {
         return projectTx({ id: 12 });
+      }
+      if (id === 13) {
+        return projectTx({ id: 13 });
       }
       throw new Error(`missing ${path}`);
     });
@@ -233,8 +252,29 @@ describe("classify_bank_transactions", () => {
 
   it("execute_apply books purchase invoices and registers transactions", async () => {
     vi.mocked(client.get).mockImplementation(async (path: string) => {
+      if (path === "/v1/vat_info") {
+        return { vat_number: "EE1", tax_refnumber: "1" };
+      }
+      if (path.startsWith("/v1/purchase_invoices/")) {
+        return { id: 500, items: [{ total_net_price: 10, vat_amount: 0 }] };
+      }
       if (path === "/v1/transactions/1") {
-        return projectTx({ id: 1, clients_id: null, description: "" });
+        return projectTx({
+          id: 1,
+          clients_id: null,
+          description: "",
+          currency_rate: null,
+        });
+      }
+      if (path === "/v1/transactions/2") {
+        return projectTx({
+          id: 2,
+          clients_id: null,
+          description: "",
+          cl_currencies_id: "USD",
+          currency_rate: 1.1,
+          amount: 10,
+        });
       }
       throw new Error(`missing ${path}`);
     });
@@ -246,7 +286,7 @@ describe("classify_bank_transactions", () => {
             counterparty: "notion labs",
             category: "saas_subscriptions",
             apply_mode: "purchase_invoice",
-            transaction_ids: [1],
+            transaction_ids: [1, 2],
             suggested_booking: {
               clients_id: 20,
               client_name: "Notion Labs",
@@ -260,21 +300,25 @@ describe("classify_bank_transactions", () => {
       }),
     );
     expect(result.mode).toBe("EXECUTED");
-    expect(result.summary.booked).toBe(1);
+    expect(result.summary.booked).toBe(2);
     expect(client.post).toHaveBeenCalledWith(
       "/v1/purchase_invoices",
-      expect.objectContaining({ clients_id: 20 }),
+      expect.objectContaining({ clients_id: 20, currency_rate: 1.1 }),
     );
     expect(client.patch).toHaveBeenCalledWith("/v1/transactions/1", {
       clients_id: 20,
     });
-    expect(client.patch).toHaveBeenCalledWith("/v1/purchase_invoices/500/register");
+    expect(client.patch).toHaveBeenCalledWith("/v1/transactions/2", {
+      clients_id: 20,
+    });
+    expect(client.patch).toHaveBeenCalledWith(
+      expect.stringMatching(/^\/v1\/purchase_invoices\/\d+\/register$/),
+    );
     expect(client.patch).toHaveBeenCalledWith(
       "/v1/transactions/1/register",
       expect.arrayContaining([
         expect.objectContaining({
           related_table: "purchase_invoices",
-          related_id: 500,
         }),
       ]),
     );
@@ -310,11 +354,17 @@ describe("classify_bank_transactions", () => {
   });
 
   it("execute_apply invalidates PI when txn goes stale after create", async () => {
-    let getCount = 0;
+    let txGets = 0;
     vi.mocked(client.get).mockImplementation(async (path: string) => {
+      if (path === "/v1/vat_info") {
+        return { vat_number: "EE1", tax_refnumber: "1" };
+      }
+      if (path.startsWith("/v1/purchase_invoices/")) {
+        return { id: 500, items: [{ total_net_price: 10, vat_amount: 0 }] };
+      }
       if (path === "/v1/transactions/12") {
-        getCount += 1;
-        if (getCount === 1) {
+        txGets += 1;
+        if (txGets === 1) {
           return projectTx({ id: 12, clients_id: null });
         }
         return projectTx({ id: 12, status: "CONFIRMED" });
@@ -348,13 +398,22 @@ describe("classify_bank_transactions", () => {
   });
 
   it("execute_apply invalidates PI when txn is deleted after create", async () => {
-    let getCount = 0;
-    vi.mocked(client.get).mockImplementation(async () => {
-      getCount += 1;
-      if (getCount === 1) {
-        return projectTx({ id: 13 });
+    let txGets = 0;
+    vi.mocked(client.get).mockImplementation(async (path: string) => {
+      if (path === "/v1/vat_info") {
+        return { vat_number: "EE1", tax_refnumber: "1" };
       }
-      return projectTx({ id: 13, is_deleted: true });
+      if (path.startsWith("/v1/purchase_invoices/")) {
+        return { id: 500, items: [{ total_net_price: 8, vat_amount: 2 }] };
+      }
+      if (path === "/v1/transactions/13") {
+        txGets += 1;
+        if (txGets === 1) {
+          return projectTx({ id: 13 });
+        }
+        return projectTx({ id: 13, is_deleted: true });
+      }
+      throw new Error(`missing ${path}`);
     });
     const result = parsed(
       await tools.classify_bank_transactions.handler({
