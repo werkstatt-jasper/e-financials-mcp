@@ -248,6 +248,14 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 | `match_transaction_to_supplier` | Word overlap scoring vs suppliers. |
 | `financial_summary` | Month rollup (default: current month). |
 
+### Bank reconciliation & classify
+
+| Tool | Description |
+|------|-------------|
+| `analyze_unconfirmed_transactions` | Read-only suggestions for PROJECT bank txs (duplicates, transfers, invoice matches, fees). |
+| `reconcile_bank_transactions` | Modes: `match`, `auto_confirm`, `transfers` (dry-run by default; `execute: true` to mutate). |
+| `classify_bank_transactions` | Modes: `classify`, `dry_run_apply`, `execute_apply` for unmatched counterparty groups. |
+
 ## Upstream API documentation
 
 | Resource | URL |

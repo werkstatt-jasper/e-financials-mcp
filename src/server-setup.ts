@@ -16,6 +16,8 @@ import type { PromptRecord } from "./prompts.js";
 import type { ResourceRegistry } from "./resources.js";
 import { matchUriTemplate } from "./resources.js";
 import { createAccountTools } from "./tools/accounts.js";
+import { createBankReconciliationTools } from "./tools/bank-reconciliation.js";
+import { createClassifyBankTools } from "./tools/classify-bank.js";
 import { createClientTools } from "./tools/clients.js";
 import { createInvoiceSettingsTools } from "./tools/invoiceSettings.js";
 import { createInvoiceTools } from "./tools/invoices.js";
@@ -50,6 +52,8 @@ export function buildAllTools(client: EFinancialsClient): ToolRecord {
     ...createAccountTools(client),
     ...createReferenceTools(client),
     ...createReportTools(client),
+    ...createBankReconciliationTools(client),
+    ...createClassifyBankTools(client),
   };
 }
 
