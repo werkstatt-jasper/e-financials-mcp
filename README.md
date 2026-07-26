@@ -122,12 +122,12 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 | Tool | Description |
 |------|-------------|
 | `list_transactions` | List bank transactions with filters (status, dates, type, client, page). |
-| `get_transaction` | Single transaction by ID. |
+| `get_transaction` | Single transaction by ID (may include read-only `items[]` relation rows). |
 | `get_unprocessed_transactions` | `PROJECT` transactions with no client. |
-| `update_transaction` | PATCH draft transaction. |
+| `update_transaction` | PATCH draft metadata only (`clients_id`, `accounts_id`, `description`) — not distribution rows. |
 | `create_transaction` | POST new draft (`PROJECT`). |
 | `delete_transaction` | DELETE transaction. |
-| `register_transaction` | Register with distributions array. |
+| `register_transaction` | Confirm with full `distributions[]` (`accounts` / `purchase_invoices` / `sale_invoices`). UI equivalent of Add a row + Save and confirm. |
 | `invalidate_transaction` | Reverse registration. |
 | `get_transaction_file` | GET attached file. |
 | `upload_transaction_file` | Upload file from local path. |
