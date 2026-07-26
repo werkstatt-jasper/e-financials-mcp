@@ -519,10 +519,30 @@ describe("invoice tools", () => {
     expect(parseToolJson(r2)).toEqual(invoicesFixture.single_purchase_detail);
   });
 
-  it("create_purchase_invoice posts mapped payload with defaults", async () => {
+  function mockPurchaseCreateFlow(id = 99) {
+    vi.mocked(client.getAllPages).mockResolvedValue([]);
+    vi.mocked(client.get).mockImplementation(async (path: string) => {
+      if (path === "/v1/vat_info") {
+        return { vat_number: "EE1", tax_refnumber: "1" } as never;
+      }
+      if (path.startsWith("/v1/purchase_invoices/")) {
+        return {
+          ...invoicesFixture.created_purchase_invoice,
+          id,
+          items: [{ total_net_price: 100, vat_amount: 20 }],
+        } as never;
+      }
+      return {} as never;
+    });
     vi.mocked(client.post).mockResolvedValue({
       ...invoicesFixture.created_purchase_invoice,
+      id,
     } as never);
+    vi.mocked(client.patch).mockResolvedValue({} as never);
+  }
+
+  it("create_purchase_invoice posts mapped payload with defaults", async () => {
+    mockPurchaseCreateFlow();
     await tools.create_purchase_invoice.handler({
       clients_id: 1,
       client_name: "Sup",
@@ -538,7 +558,6 @@ describe("invoice tools", () => {
           expect.objectContaining({
             custom_title: "Purchase",
             cl_purchase_articles_id: 39,
-            cl_vat_articles_id: undefined,
           }),
         ],
       }),
@@ -546,9 +565,7 @@ describe("invoice tools", () => {
   });
 
   it("create_purchase_invoice uses description and VAT line fields when provided", async () => {
-    vi.mocked(client.post).mockResolvedValue({
-      ...invoicesFixture.created_purchase_invoice,
-    } as never);
+    mockPurchaseCreateFlow();
     await tools.create_purchase_invoice.handler({
       clients_id: 1,
       client_name: "Sup",
@@ -558,6 +575,7 @@ describe("invoice tools", () => {
       vat_amount: 22,
       description: "Office chairs",
       cl_currencies_id: "USD",
+      currency_rate: 0.9,
       term_days: 14,
       purchase_article_id: 23,
       purchase_accounts_dimensions_id: 99,
@@ -572,10 +590,19 @@ describe("invoice tools", () => {
     expect(body.items[0].unit_net_price).toBe(100);
   });
 
+  it("create_purchase_invoice requires total_amount when items omitted", async () => {
+    await expect(
+      tools.create_purchase_invoice.handler({
+        clients_id: 1,
+        client_name: "Sup",
+        invoice_no: "INV-P",
+        invoice_date: "2025-06-01",
+      }),
+    ).rejects.toThrow(/total_amount is required/);
+  });
+
   it("create_purchase_invoice forwards reversed_vat_id to the line item", async () => {
-    vi.mocked(client.post).mockResolvedValue({
-      ...invoicesFixture.created_purchase_invoice,
-    } as never);
+    mockPurchaseCreateFlow();
     await tools.create_purchase_invoice.handler({
       clients_id: 1,
       client_name: "Cursor",
@@ -588,9 +615,10 @@ describe("invoice tools", () => {
       reversed_vat_id: 7,
     });
     const body = vi.mocked(client.post).mock.calls[0][1] as {
-      items: { reversed_vat_id?: number }[];
+      items: { reversed_vat_id?: number; vat_rate_dropdown?: string }[];
     };
     expect(body.items[0].reversed_vat_id).toBe(7);
+    expect(body.items[0].vat_rate_dropdown).toBe("-");
   });
 
   it("update_purchase_invoice gets current then patches", async () => {

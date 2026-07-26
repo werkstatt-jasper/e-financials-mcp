@@ -15,6 +15,7 @@ import {
 } from "../banking/invoice-index.js";
 import { suggestBookingFromHistory } from "../banking/supplier-history.js";
 import type { EFinancialsClient } from "../client.js";
+import { createPurchaseInvoiceWithRepair } from "../invoices/create-purchase-invoice.js";
 import type { PurchaseInvoice, SalesInvoice } from "../types/invoice.js";
 import type { Transaction } from "../types/transaction.js";
 import { optionalPositiveInt, optionalYmd, parseToolArgs } from "../validation/tool-args.js";
@@ -258,32 +259,24 @@ async function applyGroups(
       const vatRate = booking.vat_rate ?? 0;
       const invoiceNo = `BANK-${tx.id}-${tx.date}`;
       const description = bookingDescription(group, tx);
-
-      const createPayload = {
-        clients_id: booking.clients_id,
+      const createInput = {
+        clients_id: booking.clients_id as number,
         client_name: bookingClientName(group, booking),
-        number: invoiceNo,
-        create_date: tx.date,
-        journal_date: tx.date,
+        invoice_no: invoiceNo,
+        invoice_date: tx.date,
         term_days: 0,
-        gross_price: amount,
-        vat_price: vatAmount,
+        total_amount: amount,
+        vat_amount: vatAmount,
         cl_currencies_id: currency,
-        notes: description,
-        items: [
-          {
-            custom_title: description,
-            amount: 1,
-            unit_net_price: amount - vatAmount,
-            total_net_price: amount - vatAmount,
-            cl_purchase_articles_id: booking.purchase_article_id,
-            purchase_accounts_dimensions_id: booking.purchase_accounts_dimensions_id,
-            vat_rate_dropdown: String(vatRate),
-            vat_accounts_id: booking.vat_accounts_id,
-            cl_vat_articles_id: vatRate > 0 ? 1 : undefined,
-            cl_fringe_benefits_id: 1,
-          },
-        ],
+        ...(typeof tx.currency_rate === "number" && tx.currency_rate > 0
+          ? { currency_rate: tx.currency_rate }
+          : {}),
+        description,
+        purchase_article_id: booking.purchase_article_id,
+        purchase_accounts_dimensions_id: booking.purchase_accounts_dimensions_id,
+        vat_rate: vatRate,
+        vat_accounts_id: booking.vat_accounts_id,
+        explicit_totals: true,
       };
 
       if (!execute) {
@@ -310,7 +303,7 @@ async function applyGroups(
 
       let invoiceId: number | undefined;
       try {
-        const created = await client.post<PurchaseInvoice>("/v1/purchase_invoices", createPayload);
+        const created = await createPurchaseInvoiceWithRepair(client, createInput);
         invoiceId = created.id;
         await client.patch(`/v1/purchase_invoices/${invoiceId}/register`);
 

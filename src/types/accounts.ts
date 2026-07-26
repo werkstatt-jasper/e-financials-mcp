@@ -31,6 +31,11 @@ export interface PurchaseArticle {
   accounts_id: number;
   priority: number;
   cl_account_groups: string[];
+  /** Present on some API responses; used by purchase VAT defaults. */
+  vat_accounts_id?: number | null;
+  cl_vat_articles_id?: number | null;
+  vat_rate?: number | null;
+  vat_rate_dropdown?: string | null;
 }
 
 /** Matches RIK OpenAPI `BankAccounts` (`id` read-only on create/update body). */

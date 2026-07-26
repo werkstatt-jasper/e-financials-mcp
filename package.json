@@ -21,6 +21,9 @@
     "./rik-http": "./dist/rik-http.js",
     "./rik-credential-parse": "./dist/rik-credential-parse.js",
     "./upload-file-path": "./dist/upload-file-path.js",
+    "./resolve-file-input": "./dist/resolve-file-input.js",
+    "./money": "./dist/money.js",
+    "./estonian-vat": "./dist/estonian-vat.js",
     "./types/*": "./dist/types/*.js",
     "./validation/*": "./dist/validation/*.js"
   },

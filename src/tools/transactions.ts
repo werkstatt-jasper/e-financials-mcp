@@ -1,7 +1,6 @@
-import { readFile } from "node:fs/promises";
-import { basename } from "node:path";
 import { z } from "zod";
 import type { EFinancialsClient } from "../client.js";
+import { resolveFileInput } from "../resolve-file-input.js";
 import type { ApiFile } from "../types/journal.js";
 import type {
   CreateTransactionParams,
@@ -10,7 +9,6 @@ import type {
   TransactionDistributionRow,
   UpdateTransactionParams,
 } from "../types/transaction.js";
-import { resolveUploadFilePath } from "../upload-file-path.js";
 import {
   creditDebitEnum,
   optionalNumber,
@@ -505,7 +503,7 @@ export function createTransactionTools(client: EFinancialsClient) {
 
     upload_transaction_file: {
       description:
-        "Upload a file to a bank transaction (PUT .../document_user). File is read from disk, base64-encoded, sent as OpenAPI ApiFile.",
+        "Upload a file to a bank transaction (PUT .../document_user). Accepts a local path or inline base64:<data> / base64:<ext>:<data> (max 10 MiB). Sent as OpenAPI ApiFile.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -516,17 +514,15 @@ export function createTransactionTools(client: EFinancialsClient) {
           file_path: {
             type: "string",
             description:
-              "Local path to the file to upload. If MCP_FILE_UPLOAD_ROOT is set, use a path relative to that directory (absolute paths are rejected). Otherwise any readable path is allowed.",
+              "Local path or base64:<data> / base64:<ext>:<data>. If MCP_FILE_UPLOAD_ROOT is set, path inputs must be relative to that directory.",
           },
         },
         required: ["id", "file_path"],
       },
       handler: async (params: unknown) => {
         const args = parseToolArgs(uploadTransactionFileSchema, params);
-        const resolvedPath = await resolveUploadFilePath(args.file_path);
-        const fileBuffer = await readFile(resolvedPath);
-        const base64Content = fileBuffer.toString("base64");
-        const filename = basename(resolvedPath);
+        const { buffer, filename } = await resolveFileInput(args.file_path);
+        const base64Content = buffer.toString("base64");
 
         const response = await client.put(`/v1/transactions/${args.id}/document_user`, {
           name: filename,
