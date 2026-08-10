@@ -101,16 +101,21 @@ const createSalesInvoiceSchema = z.object({
 });
 
 const purchaseInvoiceItemSchema = z.object({
+  /** Existing line id — required when patching a line via update_purchase_invoice. */
+  id: optionalPositiveInt,
   custom_title: optionalString,
   amount: optionalNumber,
   unit_net_price: optionalNumber,
   total_net_price: optionalNumber,
+  products_id: optionalPositiveInt,
   cl_purchase_articles_id: optionalPositiveInt,
   purchase_accounts_dimensions_id: optionalPositiveInt,
+  /** Read-only on the API (derived from product/article); accepted for create compatibility. */
   purchase_accounts_id: optionalPositiveInt,
   vat_rate: optionalNumber,
   vat_rate_dropdown: optionalString,
   vat_accounts_id: optionalPositiveInt,
+  vat_accounts_dimensions_id: optionalPositiveInt,
   cl_vat_articles_id: optionalPositiveInt,
   reversed_vat_id: optionalPositiveInt,
   project_no_vat_gross_price: optionalNumber,
@@ -118,6 +123,47 @@ const purchaseInvoiceItemSchema = z.object({
   base_vat_price: optionalNumber,
   base_gross_price: optionalNumber,
 });
+
+type PurchaseInvoiceItemPatch = z.infer<typeof purchaseInvoiceItemSchema>;
+
+/**
+ * Merge item patches onto current purchase-invoice lines by `id`.
+ * Patches without `id` are appended. Unknown ids throw.
+ */
+export function mergePurchaseInvoiceItems(
+  currentItems: Array<Record<string, unknown>>,
+  patches: PurchaseInvoiceItemPatch[],
+): Array<Record<string, unknown>> {
+  const byId = new Map<number, Record<string, unknown>>();
+  for (const item of currentItems) {
+    if (typeof item.id === "number") {
+      byId.set(item.id, item);
+    }
+  }
+
+  const appended: Array<Record<string, unknown>> = [];
+  for (const patch of patches) {
+    const { id, ...fields } = patch;
+    const defined = Object.fromEntries(
+      Object.entries(fields).filter(([, value]) => value !== undefined),
+    ) as Record<string, unknown>;
+    if (id !== undefined) {
+      const existing = byId.get(id);
+      if (!existing) {
+        throw new Error(`Unknown purchase invoice line id: ${id}`);
+      }
+      byId.set(id, { ...existing, ...defined, id });
+    } else {
+      appended.push(defined);
+    }
+  }
+
+  // byId always contains every current line that has a numeric id
+  const merged = currentItems.map((item) =>
+    typeof item.id === "number" ? (byId.get(item.id) as Record<string, unknown>) : item,
+  );
+  return [...merged, ...appended];
+}
 
 const createPurchaseInvoiceSchema = z.object({
   clients_id: positiveInt,
@@ -162,6 +208,7 @@ const updatePurchaseInvoiceSchema = z.object({
   vat_amount: optionalNumber,
   description: optionalString,
   reversed_vat_id: optionalPositiveInt,
+  items: z.array(purchaseInvoiceItemSchema).optional(),
 });
 
 const deliverSalesInvoiceSchema = z.object({
@@ -1112,7 +1159,8 @@ export function createInvoiceTools(client: EFinancialsClient) {
     },
 
     update_purchase_invoice: {
-      description: "Update a purchase invoice draft. Only works on PROJECT status invoices.",
+      description:
+        "Update a purchase invoice draft (PROJECT). Merges header fields with the current GET. Optional items[] patches existing lines by id (or appends lines without id). purchase_accounts_id is API-derived from products_id / cl_purchase_articles_id — set those instead of writing the account id directly.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -1131,28 +1179,64 @@ export function createInvoiceTools(client: EFinancialsClient) {
           reversed_vat_id: {
             type: "number",
             description:
-              "KMD (VAT declaration) classification for reverse-charge purchases. Use 7 for non-EU suppliers (KMD line 7: '0% Other purchases of goods 24% (KMD 7)'), 4 for intra-community EU acquisitions (KMD line 4). When provided, applied to every existing line item on the invoice.",
+              "KMD (VAT declaration) classification for reverse-charge purchases. Use 7 for non-EU suppliers (KMD line 7: '0% Other purchases of goods 24% (KMD 7)'), 4 for intra-community EU acquisitions (KMD line 4). When provided, applied to every line item on the invoice after any items[] merge.",
+          },
+          items: {
+            type: "array",
+            description:
+              "Partial line patches. Include id to update an existing line (other lines unchanged). Omit id to append a new line. Unknown ids are rejected. Writable fields include products_id, custom_title, amount, unit_net_price, purchase_accounts_dimensions_id, vat_accounts_id, vat_accounts_dimensions_id, cl_purchase_articles_id. purchase_accounts_id is read-only on the API.",
+            items: {
+              type: "object",
+              properties: {
+                id: {
+                  type: "number",
+                  description: "Existing line id (from get_purchase_invoice)",
+                },
+                custom_title: { type: "string" },
+                amount: { type: "number" },
+                unit_net_price: { type: "number" },
+                total_net_price: { type: "number" },
+                products_id: {
+                  type: "number",
+                  description: "Product/service id (sets derived purchase account)",
+                },
+                cl_purchase_articles_id: { type: "number" },
+                purchase_accounts_dimensions_id: { type: "number" },
+                vat_accounts_id: { type: "number" },
+                vat_accounts_dimensions_id: { type: "number" },
+                vat_rate: { type: "number" },
+                vat_rate_dropdown: { type: "string" },
+                cl_vat_articles_id: { type: "number" },
+                reversed_vat_id: { type: "number" },
+              },
+            },
           },
         },
         required: ["id"],
       },
       handler: async (params: unknown) => {
-        const parsed = parseToolArgs(updatePurchaseInvoiceSchema, params);
-        const { id, ...updateParams } = parsed as {
-          id: number;
-        } & Partial<CreatePurchaseInvoiceParams>;
+        const updateParams = parseToolArgs(updatePurchaseInvoiceSchema, params);
+        const { id } = updateParams;
 
         // Fetch current invoice to get required fields (API requires all fields in PATCH)
         const currentResponse = await client.get(`/v1/purchase_invoices/${id}`);
         const current = currentResponse as unknown as Record<string, unknown>;
+        const currentItems = (current.items as Array<Record<string, unknown>> | undefined) ?? [];
 
-        const items =
-          updateParams.reversed_vat_id !== undefined
-            ? ((current.items as Array<Record<string, unknown>> | undefined) ?? []).map((item) => ({
-                ...item,
-                reversed_vat_id: updateParams.reversed_vat_id,
-              }))
-            : current.items;
+        let items: Array<Record<string, unknown>> | unknown = current.items;
+        if (updateParams.items !== undefined) {
+          items = mergePurchaseInvoiceItems(currentItems, updateParams.items);
+        }
+
+        if (updateParams.reversed_vat_id !== undefined) {
+          const base = (Array.isArray(items) ? items : currentItems) as Array<
+            Record<string, unknown>
+          >;
+          items = base.map((item) => ({
+            ...item,
+            reversed_vat_id: updateParams.reversed_vat_id,
+          }));
+        }
 
         // Build payload with existing values as defaults, override with provided updates
         const apiPayload = {

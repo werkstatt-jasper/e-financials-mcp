@@ -13,12 +13,14 @@ export interface PurchaseInvoiceLineInput {
   amount?: number;
   unit_net_price?: number;
   total_net_price?: number;
+  products_id?: number;
   cl_purchase_articles_id?: number;
   purchase_accounts_dimensions_id?: number;
   purchase_accounts_id?: number;
   vat_rate?: number;
   vat_rate_dropdown?: string;
   vat_accounts_id?: number;
+  vat_accounts_dimensions_id?: number;
   cl_vat_articles_id?: number;
   reversed_vat_id?: number;
   project_no_vat_gross_price?: number;
@@ -171,10 +173,12 @@ export async function createPurchaseInvoiceWithRepair(
       amount,
       unit_net_price: unitNet,
       total_net_price: totalNet,
+      products_id: line.products_id,
       cl_purchase_articles_id: line.cl_purchase_articles_id ?? 39,
       purchase_accounts_dimensions_id: line.purchase_accounts_dimensions_id,
       vat_rate_dropdown: rateStr,
       vat_accounts_id: defaults.vat_accounts_id ?? line.vat_accounts_id,
+      vat_accounts_dimensions_id: line.vat_accounts_dimensions_id,
       cl_vat_articles_id: defaults.cl_vat_articles_id ?? (rateNum > 0 ? 1 : undefined),
       cl_fringe_benefits_id: defaults.cl_fringe_benefits_id,
       reversed_vat_id: line.reversed_vat_id ?? input.reversed_vat_id,
