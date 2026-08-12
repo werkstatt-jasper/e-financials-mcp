@@ -47,6 +47,10 @@ describe("buildAllTools", () => {
     expect(tools.list_sales_invoices).toBeDefined();
     expect(tools.list_accounts).toBeDefined();
     expect(tools.reconciliation_report).toBeDefined();
+    expect(tools.compute_receivables_aging).toBeDefined();
+    expect(tools.compute_payables_aging).toBeDefined();
+    expect(tools.compute_account_balance).toBeDefined();
+    expect(tools.compute_client_debt).toBeDefined();
   });
 });
 

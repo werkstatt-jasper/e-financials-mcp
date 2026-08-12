@@ -256,6 +256,10 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 | `compute_trial_balance` | Trial balance from registered journal postings (optional date window; EUR base). |
 | `compute_balance_sheet` | Balance sheet as of optional `date_to` (Varad / Kohustused / Omakapital + open P&L). |
 | `compute_profit_and_loss` | P&L for required `date_from` / `date_to` (Tulud / Kulud → `net_profit`). |
+| `compute_receivables_aging` | Unpaid confirmed sale invoices by overdue bucket (optional `as_of_date`). |
+| `compute_payables_aging` | Unpaid confirmed purchase invoices by overdue bucket (optional `as_of_date`). |
+| `compute_account_balance` | One account balance from journal postings (optional client/date filters). |
+| `compute_client_debt` | Client net position across accounts (optional `account_ids`; else all tagged). |
 
 ### Bank reconciliation & classify
 
