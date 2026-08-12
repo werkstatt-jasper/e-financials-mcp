@@ -25,6 +25,8 @@ export interface SalesInvoice {
   term_days?: number | null;
   net_price?: number | null;
   gross_price?: number | null;
+  /** Gross in base (EUR) currency when the invoice is foreign-currency. */
+  base_gross_price?: number | null;
   cl_currencies_id: string;
   status: "PROJECT" | "CONFIRMED" | "VOID";
   payment_status: "NOT_PAID" | "PARTIALLY_PAID" | "PAID" | null;
@@ -48,6 +50,8 @@ export interface PurchaseInvoice {
   term_days?: number | null;
   net_price?: number | null;
   gross_price?: number | null;
+  /** Gross in base (EUR) currency when the invoice is foreign-currency. */
+  base_gross_price?: number | null;
   vat_price?: number | null;
   cl_currencies_id: string;
   status: "PROJECT" | "CONFIRMED" | "VOID";

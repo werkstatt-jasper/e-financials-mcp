@@ -15,7 +15,9 @@ import { logger } from "./logger.js";
 import type { PromptRecord } from "./prompts.js";
 import type { ResourceRegistry } from "./resources.js";
 import { matchUriTemplate } from "./resources.js";
+import { createAccountBalanceTools } from "./tools/account-balance.js";
 import { createAccountTools } from "./tools/accounts.js";
+import { createAgingAnalysisTools } from "./tools/aging-analysis.js";
 import { createBankReconciliationTools } from "./tools/bank-reconciliation.js";
 import { createClassifyBankTools } from "./tools/classify-bank.js";
 import { createClientTools } from "./tools/clients.js";
@@ -54,6 +56,8 @@ export function buildAllTools(client: EFinancialsClient): ToolRecord {
     ...createReferenceTools(client),
     ...createReportTools(client),
     ...createFinancialStatementTools(client),
+    ...createAgingAnalysisTools(client),
+    ...createAccountBalanceTools(client),
     ...createBankReconciliationTools(client),
     ...createClassifyBankTools(client),
   };
