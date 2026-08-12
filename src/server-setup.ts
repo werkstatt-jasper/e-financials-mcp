@@ -25,6 +25,7 @@ import { createFinancialStatementTools } from "./tools/financial-statements.js";
 import { createInvoiceSettingsTools } from "./tools/invoiceSettings.js";
 import { createInvoiceTools } from "./tools/invoices.js";
 import { createJournalTools } from "./tools/journals.js";
+import { createMonthEndCloseTools } from "./tools/month-end-close.js";
 import { createProductTools } from "./tools/products.js";
 import { createReferenceTools } from "./tools/reference.js";
 import { createReportTools } from "./tools/reports.js";
@@ -58,6 +59,7 @@ export function buildAllTools(client: EFinancialsClient): ToolRecord {
     ...createFinancialStatementTools(client),
     ...createAgingAnalysisTools(client),
     ...createAccountBalanceTools(client),
+    ...createMonthEndCloseTools(client),
     ...createBankReconciliationTools(client),
     ...createClassifyBankTools(client),
   };

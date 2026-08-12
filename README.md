@@ -260,6 +260,7 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 | `compute_payables_aging` | Unpaid confirmed purchase invoices by overdue bucket (optional `as_of_date`). |
 | `compute_account_balance` | One account balance from journal postings (optional client/date filters). |
 | `compute_client_debt` | Client net position across accounts (optional `account_ids`; else all tagged). |
+| `month_end_close_checklist` | Month-end blockers: unconfirmed journals/invoices/bank txs + overdue A/R & A/P. |
 
 ### Bank reconciliation & classify
 
