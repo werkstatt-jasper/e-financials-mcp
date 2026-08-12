@@ -51,6 +51,7 @@ describe("buildAllTools", () => {
     expect(tools.compute_payables_aging).toBeDefined();
     expect(tools.compute_account_balance).toBeDefined();
     expect(tools.compute_client_debt).toBeDefined();
+    expect(tools.month_end_close_checklist).toBeDefined();
   });
 });
 
