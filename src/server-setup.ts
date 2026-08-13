@@ -19,6 +19,7 @@ import { createAccountBalanceTools } from "./tools/account-balance.js";
 import { createAccountTools } from "./tools/accounts.js";
 import { createAgingAnalysisTools } from "./tools/aging-analysis.js";
 import { createBankReconciliationTools } from "./tools/bank-reconciliation.js";
+import { createCamt053Tools } from "./tools/camt053.js";
 import { createClassifyBankTools } from "./tools/classify-bank.js";
 import { createClientTools } from "./tools/clients.js";
 import { createFinancialStatementTools } from "./tools/financial-statements.js";
@@ -62,6 +63,7 @@ export function buildAllTools(client: EFinancialsClient): ToolRecord {
     ...createMonthEndCloseTools(client),
     ...createBankReconciliationTools(client),
     ...createClassifyBankTools(client),
+    ...createCamt053Tools(client),
   };
 }
 

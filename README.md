@@ -269,6 +269,7 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 | `analyze_unconfirmed_transactions` | Read-only suggestions for PROJECT bank txs (duplicates, transfers, invoice matches, fees). |
 | `reconcile_bank_transactions` | Modes: `match`, `auto_confirm`, `transfers` (dry-run by default; `execute: true` to mutate). |
 | `classify_bank_transactions` | Modes: `classify`, `dry_run_apply`, `execute_apply` for unmatched counterparty groups. |
+| `process_camt053` | Import CAMT.053 statements (`parse` / `dry_run` / `execute`). File path or base64 XML. |
 
 ## Upstream API documentation
 
