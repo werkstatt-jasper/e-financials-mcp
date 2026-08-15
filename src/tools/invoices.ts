@@ -13,6 +13,7 @@ import type {
 import type { ApiFile } from "../types/journal.js";
 import {
   optionalBoolean,
+  optionalNonNegativeInt,
   optionalNumber,
   optionalPage,
   optionalPositiveInt,
@@ -124,7 +125,7 @@ const createPurchaseInvoiceSchema = z.object({
   client_name: z.string().min(1),
   invoice_no: z.string().min(1),
   invoice_date: ymdDateString,
-  term_days: optionalPositiveInt,
+  term_days: optionalNonNegativeInt,
   total_amount: z.coerce.number().optional(),
   vat_amount: optionalNumber,
   cl_currencies_id: optionalString,
@@ -157,7 +158,7 @@ const updatePurchaseInvoiceSchema = z.object({
   client_name: optionalString,
   invoice_no: optionalString,
   invoice_date: optionalYmd,
-  term_days: optionalPositiveInt,
+  term_days: optionalNonNegativeInt,
   total_amount: optionalNumber,
   vat_amount: optionalNumber,
   description: optionalString,
@@ -657,12 +658,12 @@ export function createInvoiceTools(client: EFinancialsClient) {
           purchase_article_id: {
             type: "number",
             description:
-              "Purchase article ID for expense categorization (default: 39 = Office supplies). Use 23 for SaaS/services (account 4130).",
+              "Purchase article ID for expense categorization. Call list_purchase_articles for this company's IDs (names and mapped accounts differ per company). When omitted, the create path defaults to classifier 39 if that id exists.",
           },
           purchase_accounts_dimensions_id: {
             type: "number",
             description:
-              "Account dimension ID. Required when purchase_article_id maps to an account with dimensions. For article 23 (account 4130), use dimension 6488057.",
+              "Account dimension ID. Required when the chosen purchase article maps to an account that has dimensions. Call list_purchase_articles and list_account_dimensions for this company — do not reuse another company's dimension id.",
           },
           vat_rate: {
             type: "number",
@@ -1124,7 +1125,10 @@ export function createInvoiceTools(client: EFinancialsClient) {
           client_name: { type: "string" },
           invoice_no: { type: "string" },
           invoice_date: { type: "string" },
-          term_days: { type: "number" },
+          term_days: {
+            type: "number",
+            description: "Payment term in days (0 = immediate)",
+          },
           total_amount: { type: "number" },
           vat_amount: { type: "number" },
           description: { type: "string" },

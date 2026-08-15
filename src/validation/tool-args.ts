@@ -20,6 +20,11 @@ export const positiveInt = z.coerce.number().int().positive();
 
 export const optionalPositiveInt = positiveInt.nullish().transform((v) => v ?? undefined);
 
+/** Non-negative integer (0 allowed). For payment terms and similar counts. */
+export const nonNegativeInt = z.coerce.number().int().min(0);
+
+export const optionalNonNegativeInt = nonNegativeInt.nullish().transform((v) => v ?? undefined);
+
 /** Page number (1-based). */
 export const optionalPage = z.coerce
   .number()

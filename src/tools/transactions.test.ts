@@ -353,6 +353,14 @@ describe("transaction tools", () => {
     ).rejects.toThrow("ENOENT");
   });
 
+  it("register_transaction distribution example does not hardcode a tenant dimension id", () => {
+    const desc = tools.register_transaction.inputSchema.properties.distributions
+      .description as string;
+    expect(desc).toMatch(/list_account_dimensions/);
+    expect(desc).not.toMatch(/12637323|6488057/);
+    expect(desc).toMatch(/related_sub_id:456/);
+  });
+
   it("propagates API errors from client", async () => {
     vi.mocked(client.get).mockRejectedValue(new Error("API Error 404: Not found"));
 

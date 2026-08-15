@@ -99,7 +99,7 @@ describe("classify_bank_transactions", () => {
             items: [
               {
                 cl_purchase_articles_id: 23,
-                purchase_accounts_dimensions_id: 6488057,
+                purchase_accounts_dimensions_id: 99,
                 vat_rate_dropdown: "0",
               },
             ],
@@ -291,7 +291,7 @@ describe("classify_bank_transactions", () => {
               clients_id: 20,
               client_name: "Notion Labs",
               purchase_article_id: 23,
-              purchase_accounts_dimensions_id: 6488057,
+              purchase_accounts_dimensions_id: 99,
               vat_rate: 0,
               vat_amount: 0,
             },

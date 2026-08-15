@@ -248,6 +248,7 @@ export async function createPurchaseInvoiceWithRepair(
     }
 
     // Rounding repair: nudge last line project_no_vat_gross_price when explicit VAT differs
+    let itemsForPatch = fetchedItems;
     if (
       explicitTotals &&
       input.vat_amount != null &&
@@ -257,19 +258,40 @@ export async function createPurchaseInvoiceWithRepair(
       const last = fetchedItems[fetchedItems.length - 1];
       const delta = roundMoney(input.vat_amount - itemVat);
       const current = Number(last.project_no_vat_gross_price ?? 0);
-      await client.patch(`/v1/purchase_invoices/${draftId}`, {
-        items: fetchedItems.map((item, idx) =>
-          idx === fetchedItems.length - 1
-            ? { ...item, project_no_vat_gross_price: roundMoney(current + delta) }
-            : item,
-        ),
-      });
+      itemsForPatch = fetchedItems.map((item, idx) =>
+        idx === fetchedItems.length - 1
+          ? { ...item, project_no_vat_gross_price: roundMoney(current + delta) }
+          : item,
+      );
     }
 
-    await client.patch(`/v1/purchase_invoices/${draftId}`, {
-      vat_price: targetVat,
-      gross_price: targetGross,
-    });
+    const fetchedTotals = fetched as { vat_price?: number | null; gross_price?: number | null };
+    const currentGross = fetchedTotals.gross_price;
+    const currentVat = fetchedTotals.vat_price;
+    const grossNeedsRepair =
+      currentGross === undefined ||
+      currentGross === null ||
+      roundMoney(Number(currentGross)) !== roundMoney(targetGross);
+    const vatNeedsRepair =
+      currentVat === undefined ||
+      currentVat === null ||
+      roundMoney(Number(currentVat)) !== roundMoney(targetVat);
+    const itemsNudged = itemsForPatch !== fetchedItems;
+
+    let repaired = false;
+    if (grossNeedsRepair || vatNeedsRepair || itemsNudged) {
+      // RIK PATCH requires items when the draft has lines; omitting them yields
+      // "Products/services are missing!" and the create-then-repair cleanup deletes the draft.
+      const patchBody: Record<string, unknown> = {
+        vat_price: targetVat,
+        gross_price: targetGross,
+      };
+      if (itemsForPatch.length > 0) {
+        patchBody.items = itemsForPatch;
+      }
+      await client.patch(`/v1/purchase_invoices/${draftId}`, patchBody);
+      repaired = true;
+    }
 
     const finalInvoice = (await client.get<PurchaseInvoice>(
       `/v1/purchase_invoices/${draftId}`,
@@ -278,7 +300,7 @@ export async function createPurchaseInvoiceWithRepair(
     return {
       id: draftId,
       response: finalInvoice,
-      repaired: true,
+      repaired,
     };
   } catch (err) {
     if (draftId != null) {
