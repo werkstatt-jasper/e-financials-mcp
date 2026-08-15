@@ -37,6 +37,8 @@ Use the same discipline as a typical GitLab MR flow: work on a **feature branch*
    npm run lint:fix && npm run test:coverage && npm run build
    ```
 
+   If you change purchase-invoice create/repair/register and have `RIK_API_*` in `.env`, also run `npm run test:integration` (or from the SaaS repo root). The CRUD purchase-invoice case is the live check that create-then-repair did not drop `items`.
+
 6. `git push -u origin <issue-or-short-slug>`
 7. Open a PR with the [GitHub CLI](https://cli.github.com/):
 

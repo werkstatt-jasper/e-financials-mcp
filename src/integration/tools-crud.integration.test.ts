@@ -375,7 +375,12 @@ describe("CRUD tool handlers (integration)", () => {
       expect(invoiceId).toBeGreaterThan(0);
 
       const getResult = await tools.get_purchase_invoice.handler({ id: invoiceId });
-      expect(parse(getResult).id).toBe(invoiceId);
+      const created = parse(getResult);
+      expect(created.id).toBe(invoiceId);
+      // RIK rejects a totals-only repair PATCH ("Products/services are missing!")
+      // and create-then-repair then deletes the draft — assert lines survived.
+      const createdItems = created.items;
+      expect(Array.isArray(createdItems) && createdItems.length).toBeGreaterThan(0);
 
       const updateResult = await tools.update_purchase_invoice.handler({
         id: invoiceId,

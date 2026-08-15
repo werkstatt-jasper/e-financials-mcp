@@ -1,6 +1,7 @@
 import type { EFinancialsClient } from "../client.js";
 import { roundMoney } from "../money.js";
 import type { PurchaseInvoice } from "../types/invoice.js";
+import { buildPurchaseInvoiceTotalsPatch } from "./purchase-invoice-patch.js";
 import { isCompanyVatRegistered } from "./purchase-vat-defaults.js";
 
 export interface RegisterPurchaseInvoiceInput {
@@ -89,11 +90,14 @@ export async function registerPurchaseInvoiceWithRepair(
         roundMoney(Number(currentVat)) !== roundMoney(vat));
 
     if (grossNeedsRepair || vatNeedsRepair) {
-      await client.patch(`/v1/purchase_invoices/${input.id}`, {
-        vat_price: vat,
-        gross_price: gross,
-        items,
-      });
+      await client.patch(
+        `/v1/purchase_invoices/${input.id}`,
+        buildPurchaseInvoiceTotalsPatch({
+          vat_price: vat,
+          gross_price: gross,
+          items,
+        }),
+      );
       repaired = true;
     }
   }
