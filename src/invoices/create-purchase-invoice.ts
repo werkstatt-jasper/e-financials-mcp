@@ -2,6 +2,7 @@ import type { EFinancialsClient } from "../client.js";
 import { formatVatRateDropdown, parseVatRateDropdown, roundMoney } from "../money.js";
 import type { PurchaseArticle } from "../types/accounts.js";
 import type { PurchaseInvoice } from "../types/invoice.js";
+import { buildPurchaseInvoiceTotalsPatch } from "./purchase-invoice-patch.js";
 import {
   applyPurchaseVatDefaults,
   isCompanyVatRegistered,
@@ -280,16 +281,14 @@ export async function createPurchaseInvoiceWithRepair(
 
     let repaired = false;
     if (grossNeedsRepair || vatNeedsRepair || itemsNudged) {
-      // RIK PATCH requires items when the draft has lines; omitting them yields
-      // "Products/services are missing!" and the create-then-repair cleanup deletes the draft.
-      const patchBody: Record<string, unknown> = {
-        vat_price: targetVat,
-        gross_price: targetGross,
-      };
-      if (itemsForPatch.length > 0) {
-        patchBody.items = itemsForPatch;
-      }
-      await client.patch(`/v1/purchase_invoices/${draftId}`, patchBody);
+      await client.patch(
+        `/v1/purchase_invoices/${draftId}`,
+        buildPurchaseInvoiceTotalsPatch({
+          vat_price: targetVat,
+          gross_price: targetGross,
+          items: itemsForPatch,
+        }),
+      );
       repaired = true;
     }
 

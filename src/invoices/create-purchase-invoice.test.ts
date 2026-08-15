@@ -309,7 +309,7 @@ describe("createPurchaseInvoiceWithRepair", () => {
     });
     expect(client.patch).toHaveBeenCalledWith(
       "/v1/purchase_invoices/42",
-      expect.objectContaining({ gross_price: 10, vat_price: 0 }),
+      expect.objectContaining({ gross_price: 10, vat_price: 0, items: [] }),
     );
   });
 
