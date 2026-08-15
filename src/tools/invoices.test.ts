@@ -625,7 +625,7 @@ describe("invoice tools", () => {
       total_amount: 17.36,
       vat_rate: 0,
       purchase_article_id: 23,
-      purchase_accounts_dimensions_id: 6488057,
+      purchase_accounts_dimensions_id: 99,
       reversed_vat_id: 7,
     });
     const body = vi.mocked(client.post).mock.calls[0][1] as {
@@ -633,6 +633,46 @@ describe("invoice tools", () => {
     };
     expect(body.items[0].reversed_vat_id).toBe(7);
     expect(body.items[0].vat_rate_dropdown).toBe("-");
+  });
+
+  it("create_purchase_invoice accepts term_days 0", async () => {
+    mockPurchaseCreateFlow();
+    await tools.create_purchase_invoice.handler({
+      clients_id: 1,
+      client_name: "Sup",
+      invoice_no: "INV-P0",
+      invoice_date: "2025-06-01",
+      total_amount: 50,
+      term_days: 0,
+    });
+    expect(client.post).toHaveBeenCalledWith(
+      "/v1/purchase_invoices",
+      expect.objectContaining({ term_days: 0 }),
+    );
+  });
+
+  it("create_purchase_invoice rejects negative term_days", async () => {
+    await expect(
+      tools.create_purchase_invoice.handler({
+        clients_id: 1,
+        client_name: "Sup",
+        invoice_no: "INV-P",
+        invoice_date: "2025-06-01",
+        total_amount: 50,
+        term_days: -1,
+      }),
+    ).rejects.toThrow(/term_days/);
+  });
+
+  it("create_purchase_invoice descriptions do not hardcode tenant dimension ids", () => {
+    const dim = tools.create_purchase_invoice.inputSchema.properties.purchase_accounts_dimensions_id
+      .description as string;
+    const article = tools.create_purchase_invoice.inputSchema.properties.purchase_article_id
+      .description as string;
+    expect(dim).toMatch(/list_account_dimensions|list_purchase_articles/);
+    expect(dim).not.toMatch(/6488057|12637323/);
+    expect(article).toMatch(/list_purchase_articles/);
+    expect(article).not.toMatch(/6488057/);
   });
 
   it("update_purchase_invoice gets current then patches", async () => {
@@ -711,6 +751,22 @@ describe("invoice tools", () => {
       items: Array<Record<string, unknown>>;
     };
     expect(body.items).toBe(originalItems);
+  });
+
+  it("update_purchase_invoice accepts term_days 0", async () => {
+    vi.mocked(client.get).mockResolvedValueOnce({
+      ...invoicesFixture.purchase_get_for_patch,
+    } as never);
+    vi.mocked(client.patch).mockResolvedValue({
+      ...invoicesFixture.patch_purchase_result,
+    } as never);
+
+    await tools.update_purchase_invoice.handler({ id: 11, term_days: 0 });
+
+    expect(client.patch).toHaveBeenCalledWith(
+      "/v1/purchase_invoices/11",
+      expect.objectContaining({ term_days: 0 }),
+    );
   });
 
   it("update_purchase_invoice uses term_days and vat fallbacks from minimal current", async () => {

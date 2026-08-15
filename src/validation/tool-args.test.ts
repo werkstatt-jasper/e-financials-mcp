@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
   formatZodError,
+  optionalNonNegativeInt,
   optionalYmd,
   parseToolArgs,
   positiveInt,
@@ -51,6 +52,14 @@ describe("parseToolArgs", () => {
     const out = parseToolArgs(schema, { x: 1, extra: "gone" });
     expect(out).toEqual({ x: 1 });
     expect(Object.keys(out as object)).not.toContain("extra");
+  });
+
+  it("accepts term-like optionalNonNegativeInt including 0", () => {
+    const schema = z.object({ term_days: optionalNonNegativeInt });
+    expect(parseToolArgs(schema, { term_days: 0 })).toEqual({ term_days: 0 });
+    expect(parseToolArgs(schema, { term_days: 14 })).toEqual({ term_days: 14 });
+    expect(parseToolArgs(schema, {})).toEqual({ term_days: undefined });
+    expect(() => parseToolArgs(schema, { term_days: -1 })).toThrow(/term_days/);
   });
 
   it("accepts valid optional YMD", () => {

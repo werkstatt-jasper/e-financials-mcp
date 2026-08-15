@@ -400,7 +400,7 @@ export function createTransactionTools(client: EFinancialsClient) {
           distributions: {
             type: "array",
             description:
-              'Full list of distribution rows for PATCH .../register (OpenAPI TransactionsDistributions). Example invoice: [{related_table:"purchase_invoices",related_id:123,amount:59.94}]. Example account with dimension: [{related_table:"accounts",related_id:1360,related_sub_id:12637323,amount:100}]',
+              'Full list of distribution rows for PATCH .../register (OpenAPI TransactionsDistributions). Example invoice: [{related_table:"purchase_invoices",related_id:123,amount:59.94}]. Example account with dimension: [{related_table:"accounts",related_id:1360,related_sub_id:456,amount:100}] — related_id is the chart account code (e.g. 1360 cash); related_sub_id is this company\'s dimension id from list_account_dimensions, not a value copied from another tenant.',
             items: {
               type: "object",
               properties: {

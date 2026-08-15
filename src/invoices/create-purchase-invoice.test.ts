@@ -22,8 +22,8 @@ describe("createPurchaseInvoiceWithRepair", () => {
           status: "PROJECT",
           payment_status: "NOT_PAID",
           cl_currencies_id: "EUR",
-          gross_price: 124,
-          vat_price: 24,
+          gross_price: 0,
+          vat_price: 0,
           items: [{ total_net_price: 100, vat_amount: 24 }],
         };
       }
@@ -60,8 +60,44 @@ describe("createPurchaseInvoiceWithRepair", () => {
     );
     expect(client.patch).toHaveBeenCalledWith(
       "/v1/purchase_invoices/42",
-      expect.objectContaining({ vat_price: expect.any(Number), gross_price: expect.any(Number) }),
+      expect.objectContaining({
+        vat_price: 20,
+        gross_price: 120,
+        items: expect.arrayContaining([
+          expect.objectContaining({ total_net_price: 100, vat_amount: 24 }),
+        ]),
+      }),
     );
+  });
+
+  it("skips totals repair when GET already has matching vat/gross", async () => {
+    vi.mocked(client.get).mockImplementation(async (path: string) => {
+      if (path === "/v1/vat_info") {
+        return { vat_number: "EE123", tax_refnumber: "1" };
+      }
+      if (path.startsWith("/v1/purchase_invoices/")) {
+        return {
+          id: 42,
+          clients_id: 1,
+          status: "PROJECT",
+          payment_status: "NOT_PAID",
+          cl_currencies_id: "EUR",
+          gross_price: 124,
+          vat_price: 24,
+          items: [{ total_net_price: 100, vat_amount: 24 }],
+        };
+      }
+      return {};
+    });
+    const result = await createPurchaseInvoiceWithRepair(client, {
+      clients_id: 1,
+      client_name: "Sup",
+      invoice_no: "P-skip",
+      invoice_date: "2025-06-01",
+      items: [{ custom_title: "A", total_net_price: 100, vat_rate: 24 }],
+    });
+    expect(result.repaired).toBe(false);
+    expect(client.patch).not.toHaveBeenCalled();
   });
 
   it("requires currency_rate for non-EUR", async () => {
