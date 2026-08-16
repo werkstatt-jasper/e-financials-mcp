@@ -51,6 +51,10 @@ export interface CreatePurchaseInvoiceInput {
   base_net_price?: number;
   base_vat_price?: number;
   base_gross_price?: number;
+  paid_in_cash?: boolean;
+  cash_accounts_id?: number;
+  cash_accounts_dimensions_id?: number;
+  cash_payment_date?: string;
 }
 
 export interface CreatePurchaseInvoiceResult {
@@ -108,7 +112,11 @@ function buildLinesFromFriendlyParams(
   if (gross == null) {
     throw new Error("total_amount is required when items are omitted");
   }
-  const vat = input.vat_amount ?? 0;
+  let vat = input.vat_amount;
+  if (vat == null && input.vat_rate != null && input.vat_rate > 0) {
+    vat = roundMoney((gross * input.vat_rate) / (100 + input.vat_rate));
+  }
+  vat = vat ?? 0;
   const net = roundMoney(gross - vat);
   return [
     {
@@ -198,8 +206,21 @@ export async function createPurchaseInvoiceWithRepair(
   /* v8 ignore stop */
 
   const linesNet = roundMoney(apiItems.reduce((s, i) => s + Number(i.total_net_price || 0), 0));
-  const initialGross = input.total_amount ?? linesNet;
-  const initialVat = input.vat_amount ?? 0;
+  const derivedVat = roundMoney(
+    apiItems.reduce((acc, item) => {
+      const net = Number(item.total_net_price || 0);
+      const rate = parseVatRateDropdown(
+        item.vat_rate_dropdown as string | number | null | undefined,
+      );
+      return acc + roundMoney((net * rate) / 100);
+    }, 0),
+  );
+  const initialVat = isVatRegistered ? (input.vat_amount ?? derivedVat) : 0;
+  const derivedGross = roundMoney(linesNet + initialVat);
+  const initialGross =
+    !explicitTotals && input.items && input.items.length > 0
+      ? derivedGross
+      : (input.total_amount ?? derivedGross);
 
   const postBody: Record<string, unknown> = {
     clients_id: input.clients_id,
@@ -209,11 +230,23 @@ export async function createPurchaseInvoiceWithRepair(
     journal_date: input.invoice_date,
     term_days: input.term_days ?? 0,
     gross_price: initialGross,
-    vat_price: isVatRegistered ? initialVat : 0,
+    vat_price: initialVat,
     cl_currencies_id: currency,
     notes: input.description,
     items: apiItems,
   };
+  if (input.paid_in_cash !== undefined) {
+    postBody.paid_in_cash = input.paid_in_cash;
+  }
+  if (input.cash_accounts_id !== undefined) {
+    postBody.cash_accounts_id = input.cash_accounts_id;
+  }
+  if (input.cash_accounts_dimensions_id !== undefined) {
+    postBody.cash_accounts_dimensions_id = input.cash_accounts_dimensions_id;
+  }
+  if (input.cash_payment_date !== undefined) {
+    postBody.cash_payment_date = input.cash_payment_date;
+  }
 
   if (currency !== "EUR") {
     postBody.currency_rate = input.currency_rate;

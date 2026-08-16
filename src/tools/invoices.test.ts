@@ -375,6 +375,35 @@ describe("invoice tools", () => {
     expect(client.patch).toHaveBeenCalledWith("/v1/sale_invoices/10/deliver", {});
   });
 
+  it("upload_purchase_invoice_file fetches an https URL", async () => {
+    const pdf = Buffer.from("%PDF-1.4");
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 200,
+      ok: true,
+      headers: new Headers({ "content-type": "application/pdf" }),
+      arrayBuffer: async () => pdf.buffer.slice(pdf.byteOffset, pdf.byteOffset + pdf.byteLength),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.mocked(client.put).mockResolvedValue({ ...invoicesFixture.upload_put_ok } as never);
+
+    try {
+      const result = await tools.upload_purchase_invoice_file.handler({
+        invoice_id: 12,
+        file_path: "https://files.example.com/Invoice-DFMZYDAL-0004.pdf",
+      });
+
+      expect(readFile).not.toHaveBeenCalled();
+      expect(client.put).toHaveBeenCalledWith("/v1/purchase_invoices/12/document_user", {
+        name: "Invoice-DFMZYDAL-0004.pdf",
+        contents: pdf.toString("base64"),
+      });
+      const data = parseToolJson(result) as { success: boolean };
+      expect(data.success).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("upload_purchase_invoice_file reads file, encodes base64, and puts document", async () => {
     vi.mocked(readFile).mockResolvedValue(Buffer.from("hello"));
     vi.mocked(client.put).mockResolvedValue({ ...invoicesFixture.upload_put_ok } as never);
@@ -635,6 +664,30 @@ describe("invoice tools", () => {
     expect(body.items[0].vat_rate_dropdown).toBe("-");
   });
 
+  it("create_purchase_invoice forwards cash-payment fields", async () => {
+    mockPurchaseCreateFlow();
+    await tools.create_purchase_invoice.handler({
+      clients_id: 1,
+      client_name: "Sup",
+      invoice_no: "INV-CASH",
+      invoice_date: "2025-06-01",
+      total_amount: 50,
+      paid_in_cash: true,
+      cash_accounts_id: 1360,
+      cash_accounts_dimensions_id: 407164,
+      cash_payment_date: "2025-06-01",
+    });
+    expect(client.post).toHaveBeenCalledWith(
+      "/v1/purchase_invoices",
+      expect.objectContaining({
+        paid_in_cash: true,
+        cash_accounts_id: 1360,
+        cash_accounts_dimensions_id: 407164,
+        cash_payment_date: "2025-06-01",
+      }),
+    );
+  });
+
   it("create_purchase_invoice accepts term_days 0", async () => {
     mockPurchaseCreateFlow();
     await tools.create_purchase_invoice.handler({
@@ -751,6 +804,31 @@ describe("invoice tools", () => {
       items: Array<Record<string, unknown>>;
     };
     expect(body.items).toBe(originalItems);
+  });
+
+  it("update_purchase_invoice forwards cash-payment fields", async () => {
+    vi.mocked(client.get).mockResolvedValueOnce({
+      ...invoicesFixture.purchase_get_for_patch,
+    } as never);
+    vi.mocked(client.patch).mockResolvedValue({
+      ...invoicesFixture.patch_purchase_result,
+    } as never);
+    await tools.update_purchase_invoice.handler({
+      id: 11,
+      paid_in_cash: true,
+      cash_accounts_id: 1360,
+      cash_accounts_dimensions_id: 407164,
+      cash_payment_date: "2025-06-02",
+    });
+    expect(client.patch).toHaveBeenCalledWith(
+      "/v1/purchase_invoices/11",
+      expect.objectContaining({
+        paid_in_cash: true,
+        cash_accounts_id: 1360,
+        cash_accounts_dimensions_id: 407164,
+        cash_payment_date: "2025-06-02",
+      }),
+    );
   });
 
   it("update_purchase_invoice accepts term_days 0", async () => {

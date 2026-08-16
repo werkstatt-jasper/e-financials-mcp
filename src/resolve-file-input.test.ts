@@ -1,7 +1,7 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_BASE64_UPLOAD_BYTES, resolveFileInput } from "./resolve-file-input.js";
 
 describe("resolveFileInput", () => {
@@ -11,6 +11,7 @@ describe("resolveFileInput", () => {
 
   afterEach(() => {
     delete process.env.MCP_FILE_UPLOAD_ROOT;
+    vi.unstubAllGlobals();
   });
 
   it("reads a filesystem path", async () => {
@@ -103,7 +104,6 @@ describe("resolveFileInput", () => {
   });
 
   it("rejects oversized base64 before decode when approximate size exceeds limit", async () => {
-    // Construct a base64 string that would decode larger than the limit
     const charsNeeded = Math.ceil(((MAX_BASE64_UPLOAD_BYTES + 1000) * 4) / 3);
     const huge = "A".repeat(charsNeeded);
     await expect(resolveFileInput(`base64:pdf:${huge}`)).rejects.toThrow(/file_too_large/);
@@ -123,5 +123,220 @@ describe("resolveFileInput", () => {
     const result = await resolveFileInput("a.pdf");
     expect(result.filename).toBe("a.pdf");
     await expect(resolveFileInput("/etc/passwd")).rejects.toThrow(/relative path/);
+  });
+});
+
+function mockResponse(init: {
+  status?: number;
+  headers?: Record<string, string>;
+  body?: Buffer | string;
+}): Response {
+  const body = init.body ?? Buffer.from("%PDF-1.4 test");
+  const buf = typeof body === "string" ? Buffer.from(body) : body;
+  return {
+    status: init.status ?? 200,
+    ok: (init.status ?? 200) >= 200 && (init.status ?? 200) < 300,
+    headers: new Headers(init.headers),
+    arrayBuffer: async () =>
+      buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer,
+  } as Response;
+}
+
+describe("resolveFileInput URL mode", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("fetches https URL and uses Content-Type plus path filename", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      mockResponse({
+        headers: { "content-type": "application/pdf; charset=binary" },
+        body: Buffer.from("%PDF-1.4 hello"),
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await resolveFileInput("https://files.example.com/invoices/scan.pdf");
+    expect(result.filename).toBe("scan.pdf");
+    expect(result.extension).toBe(".pdf");
+    expect(result.buffer.toString()).toContain("%PDF-1.4");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://files.example.com/invoices/scan.pdf",
+      expect.objectContaining({ redirect: "manual" }),
+    );
+  });
+
+  it("follows a single http(s) redirect", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        mockResponse({
+          status: 302,
+          headers: { location: "https://cdn.example.com/a.png" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        mockResponse({
+          headers: { "content-type": "image/png" },
+          body: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]),
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await resolveFileInput("https://example.com/go");
+    expect(result.extension).toBe(".png");
+    expect(result.filename).toBe("a.png");
+  });
+
+  it("rejects file:// and other non-http schemes", async () => {
+    await expect(resolveFileInput("file:///tmp/x.pdf")).rejects.toThrow(/http:\/\/ or https:\/\//);
+    await expect(resolveFileInput("ftp://files.example.com/a.pdf")).rejects.toThrow(
+      /http:\/\/ or https:\/\//,
+    );
+    await expect(resolveFileInput("http://[")).rejects.toThrow(/http:\/\/ or https:\/\//);
+  });
+
+  it("rejects redirect to a non-http location", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        mockResponse({
+          status: 302,
+          headers: { location: "file:///etc/passwd" },
+        }),
+      ),
+    );
+    await expect(resolveFileInput("https://example.com/x")).rejects.toThrow(
+      /http:\/\/ or https:\/\//,
+    );
+  });
+
+  it("rejects redirect without Location", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockResponse({ status: 301 })));
+    await expect(resolveFileInput("https://example.com/x")).rejects.toThrow(/Location/);
+  });
+
+  it("rejects too many redirects", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(async (url: string) =>
+        mockResponse({
+          status: 302,
+          headers: { location: `${url}/next` },
+        }),
+      ),
+    );
+    await expect(resolveFileInput("https://example.com/r")).rejects.toThrow(/redirect limit/);
+  });
+
+  it("rejects HTTP error status", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockResponse({ status: 404 })));
+    await expect(resolveFileInput("https://example.com/missing.pdf")).rejects.toThrow(/HTTP 404/);
+  });
+
+  it("rejects Content-Length over the size cap", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        mockResponse({
+          headers: { "content-length": String(11 * 1024 * 1024) },
+        }),
+      ),
+    );
+    await expect(resolveFileInput("https://example.com/big.pdf")).rejects.toThrow(/file_too_large/);
+  });
+
+  it("rejects a body over the size cap when Content-Length is absent", async () => {
+    const big = Buffer.alloc(10 * 1024 * 1024 + 1, 1);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockResponse({ body: big })));
+    await expect(resolveFileInput("https://example.com/big")).rejects.toThrow(/file_too_large/);
+  });
+
+  it("maps timeout/abort to a fetch timeout error", async () => {
+    const timeout = Object.assign(new Error("aborted"), { name: "TimeoutError" });
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(timeout));
+    await expect(resolveFileInput("https://example.com/slow.pdf")).rejects.toThrow(/timed out/);
+
+    const abort = Object.assign(new Error("aborted"), { name: "AbortError" });
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(abort));
+    await expect(resolveFileInput("https://example.com/slow.pdf")).rejects.toThrow(/timed out/);
+  });
+
+  it("wraps other fetch failures", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("ECONNREFUSED")));
+    await expect(resolveFileInput("https://example.com/x.pdf")).rejects.toThrow(/ECONNREFUSED/);
+
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue("boom"));
+    await expect(resolveFileInput("https://example.com/x.pdf")).rejects.toThrow(/boom/);
+  });
+
+  it("sniffs magic bytes when Content-Type and path have no extension", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        mockResponse({
+          body: Buffer.from("%PDF-1.7"),
+        }),
+      ),
+    );
+    const result = await resolveFileInput("https://example.com/");
+    expect(result.extension).toBe(".pdf");
+    expect(result.filename).toBe("upload.pdf");
+  });
+
+  it("uses URL path extension when Content-Type is missing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(mockResponse({ body: Buffer.from("a,b\n1,2\n") })),
+    );
+    const result = await resolveFileInput("https://example.com/data.csv");
+    expect(result.extension).toBe(".csv");
+    expect(result.filename).toBe("data.csv");
+  });
+
+  it("rejects unknown type and unsupported extension", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockResponse({ body: Buffer.from("xxxx") })));
+    await expect(resolveFileInput("https://example.com/blob")).rejects.toThrow(/Ambiguous URL/);
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockResponse({ body: Buffer.from("xxxx") })));
+    await expect(resolveFileInput("https://example.com/x.exe")).rejects.toThrow(/Unsupported/);
+  });
+
+  it("uses Content-Type fallbacks for jpeg/xml/csv aliases", async () => {
+    const cases: Array<[string, string]> = [
+      ["image/jpeg", ".jpg"],
+      ["image/jpg", ".jpg"],
+      ["text/xml", ".xml"],
+      ["application/xml", ".xml"],
+      ["text/csv", ".csv"],
+      ["application/csv", ".csv"],
+    ];
+    for (const [contentType, ext] of cases) {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          mockResponse({
+            headers: { "content-type": contentType },
+            body: Buffer.from("xx"),
+          }),
+        ),
+      );
+      const result = await resolveFileInput("https://example.com/download");
+      expect(result.extension).toBe(ext);
+    }
+  });
+
+  it("ignores empty Content-Type mime and falls back to path", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        mockResponse({
+          headers: { "content-type": ";" },
+          body: Buffer.from("a,b\n"),
+        }),
+      ),
+    );
+    const result = await resolveFileInput("https://example.com/export.csv");
+    expect(result.extension).toBe(".csv");
   });
 });

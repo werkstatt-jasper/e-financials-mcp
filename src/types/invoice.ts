@@ -94,4 +94,8 @@ export interface CreatePurchaseInvoiceParams {
   vat_rate?: number;
   vat_accounts_id?: number;
   reversed_vat_id?: number;
+  paid_in_cash?: boolean;
+  cash_accounts_id?: number;
+  cash_accounts_dimensions_id?: number;
+  cash_payment_date?: string;
 }
