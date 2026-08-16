@@ -109,9 +109,133 @@ function resolveBase64Input(payload: string): ResolvedFileInput {
   return { buffer, filename, extension };
 }
 
+const URL_FETCH_TIMEOUT_MS = 30_000;
+const MAX_REDIRECTS = 5;
+const URL_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
+
+const CONTENT_TYPE_EXTENSION: Record<string, string> = {
+  "application/pdf": ".pdf",
+  "image/png": ".png",
+  "image/jpeg": ".jpg",
+  "image/jpg": ".jpg",
+  "text/xml": ".xml",
+  "application/xml": ".xml",
+  "text/csv": ".csv",
+  "application/csv": ".csv",
+};
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" || parsed.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function extensionFromContentType(contentType: string | null): string | undefined {
+  if (!contentType) {
+    return undefined;
+  }
+  const mime = contentType.split(";")[0]?.trim().toLowerCase();
+  return mime ? CONTENT_TYPE_EXTENSION[mime] : undefined;
+}
+
+function filenameFromUrl(url: string, extension: string): string {
+  const pathname = new URL(url).pathname;
+  const last = pathname.split("/").filter(Boolean).pop();
+  if (last?.includes(".")) {
+    return last;
+  }
+  return `upload${extension}`;
+}
+
+type FetchedUrl = { buffer: Buffer; finalUrl: string; contentType: string | null };
+
+async function fetchHttpUrl(url: string, hops = 0): Promise<FetchedUrl> {
+  if (hops > MAX_REDIRECTS) {
+    throw new Error("file_path URL exceeded redirect limit");
+  }
+  if (!isHttpUrl(url)) {
+    throw new Error("file_path URL must be http:// or https://");
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      redirect: "manual",
+      signal: AbortSignal.timeout(URL_FETCH_TIMEOUT_MS),
+    });
+  } catch (err) {
+    const name = err instanceof Error ? err.name : "";
+    if (name === "TimeoutError" || name === "AbortError") {
+      throw new Error("file_path URL fetch timed out");
+    }
+    throw new Error(
+      `file_path URL fetch failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  if (res.status >= 300 && res.status < 400) {
+    const location = res.headers.get("location");
+    if (!location) {
+      throw new Error("file_path URL redirect missing Location header");
+    }
+    const next = new URL(location, url).toString();
+    return fetchHttpUrl(next, hops + 1);
+  }
+
+  if (!res.ok) {
+    throw new Error(`file_path URL fetch failed: HTTP ${res.status}`);
+  }
+
+  const contentLength = Number(res.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > MAX_BASE64_UPLOAD_BYTES) {
+    throw new Error(
+      `file_too_large: URL payload too large (${(contentLength / 1024 / 1024).toFixed(1)} MB; max ${MAX_BASE64_UPLOAD_BYTES / 1024 / 1024} MB)`,
+    );
+  }
+
+  const buffer = Buffer.from(await res.arrayBuffer());
+  if (buffer.length > MAX_BASE64_UPLOAD_BYTES) {
+    throw new Error(
+      `file_too_large: URL payload too large (${(buffer.length / 1024 / 1024).toFixed(1)} MB; max ${MAX_BASE64_UPLOAD_BYTES / 1024 / 1024} MB)`,
+    );
+  }
+
+  return { buffer, finalUrl: url, contentType: res.headers.get("content-type") };
+}
+
+async function resolveUrlInput(url: string): Promise<ResolvedFileInput> {
+  const { buffer, finalUrl, contentType } = await fetchHttpUrl(url);
+  let extension = extensionFromContentType(contentType);
+  if (!extension) {
+    const pathname = new URL(finalUrl).pathname;
+    const last = pathname.split("/").filter(Boolean).pop() ?? "";
+    const dot = last.lastIndexOf(".");
+    if (dot > 0) {
+      extension = normalizeExtensionHint(last.slice(dot + 1));
+    }
+  }
+  if (!extension) {
+    extension = sniffExtension(buffer);
+  }
+  if (!extension) {
+    throw new Error(
+      "Ambiguous URL payload: could not determine file type from Content-Type, URL path, or file bytes",
+    );
+  }
+  if (!ALLOWED_EXTENSIONS.has(extension)) {
+    throw new Error(
+      `Unsupported file extension "${extension}". Allowed: ${[...ALLOWED_EXTENSIONS].join(", ")}`,
+    );
+  }
+  return { buffer, filename: filenameFromUrl(finalUrl, extension), extension };
+}
+
 /**
- * Resolve a tool `file_path` that is either a filesystem path or an inline
- * `base64:<data>` / `base64:<ext>:<data>` payload (for remote MCP clients).
+ * Resolve a tool `file_path` that is a filesystem path, an `https://` URL,
+ * or an inline `base64:<data>` / `base64:<ext>:<data>` payload.
  */
 export async function resolveFileInput(filePath: string): Promise<ResolvedFileInput> {
   const trimmed = filePath.trim();
@@ -121,6 +245,10 @@ export async function resolveFileInput(filePath: string): Promise<ResolvedFileIn
 
   if (trimmed.toLowerCase().startsWith(BASE64_PREFIX)) {
     return resolveBase64Input(trimmed);
+  }
+
+  if (URL_SCHEME.test(trimmed)) {
+    return resolveUrlInput(trimmed);
   }
 
   const resolvedPath = await resolveUploadFilePath(trimmed);

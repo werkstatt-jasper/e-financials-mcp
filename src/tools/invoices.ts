@@ -140,6 +140,10 @@ const createPurchaseInvoiceSchema = z.object({
   base_net_price: optionalNumber,
   base_vat_price: optionalNumber,
   base_gross_price: optionalNumber,
+  paid_in_cash: optionalBoolean,
+  cash_accounts_id: optionalPositiveInt,
+  cash_accounts_dimensions_id: optionalPositiveInt,
+  cash_payment_date: optionalYmd,
 });
 
 const updateSalesInvoiceSchema = z.object({
@@ -163,6 +167,10 @@ const updatePurchaseInvoiceSchema = z.object({
   vat_amount: optionalNumber,
   description: optionalString,
   reversed_vat_id: optionalPositiveInt,
+  paid_in_cash: optionalBoolean,
+  cash_accounts_id: optionalPositiveInt,
+  cash_accounts_dimensions_id: optionalPositiveInt,
+  cash_payment_date: optionalYmd,
 });
 
 const deliverSalesInvoiceSchema = z.object({
@@ -684,6 +692,25 @@ export function createInvoiceTools(client: EFinancialsClient) {
             description: "Optional multi-line items (overrides single-line friendly params)",
             items: { type: "object" },
           },
+          paid_in_cash: {
+            type: "boolean",
+            description:
+              "Mark the invoice as paid in cash (accountable-person / petty-cash payment).",
+          },
+          cash_accounts_id: {
+            type: "number",
+            description:
+              "Cash account code when paid_in_cash is true (e.g. 1360). Call list_accounts for this company.",
+          },
+          cash_accounts_dimensions_id: {
+            type: "number",
+            description:
+              "Cash account dimension ID when that account has dimensions. Call list_account_dimensions for this company.",
+          },
+          cash_payment_date: {
+            type: "string",
+            description: "Cash payment date (YYYY-MM-DD). Often the same as invoice_date.",
+          },
         },
         required: ["clients_id", "client_name", "invoice_no", "invoice_date"],
       },
@@ -700,6 +727,10 @@ export function createInvoiceTools(client: EFinancialsClient) {
           base_net_price: paramsParsed.base_net_price,
           base_vat_price: paramsParsed.base_vat_price,
           base_gross_price: paramsParsed.base_gross_price,
+          paid_in_cash: paramsParsed.paid_in_cash,
+          cash_accounts_id: paramsParsed.cash_accounts_id,
+          cash_accounts_dimensions_id: paramsParsed.cash_accounts_dimensions_id,
+          cash_payment_date: paramsParsed.cash_payment_date,
         });
         return {
           content: [
@@ -959,7 +990,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
 
     upload_sales_invoice_user_file: {
       description:
-        "Upload a file to a sales invoice (PUT .../document_user). Accepts a local path or inline base64:<data> / base64:<ext>:<data> (max 10 MiB). Sent as OpenAPI ApiFile.",
+        "Upload a file to a sales invoice (PUT .../document_user). Accepts a local path, https:// URL, or inline base64:<data> / base64:<ext>:<data> (max 10 MiB). Sent as OpenAPI ApiFile.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -970,7 +1001,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
           file_path: {
             type: "string",
             description:
-              "Local path or base64:<data> / base64:<ext>:<data>. If MCP_FILE_UPLOAD_ROOT is set, path inputs must be relative to that directory.",
+              "Local path, https:// URL (server fetches the bytes), or base64:<data> / base64:<ext>:<data>. If MCP_FILE_UPLOAD_ROOT is set, path inputs must be relative to that directory. Max 10 MiB.",
           },
         },
         required: ["id", "file_path"],
@@ -1137,6 +1168,25 @@ export function createInvoiceTools(client: EFinancialsClient) {
             description:
               "KMD (VAT declaration) classification for reverse-charge purchases. Use 7 for non-EU suppliers (KMD line 7: '0% Other purchases of goods 24% (KMD 7)'), 4 for intra-community EU acquisitions (KMD line 4). When provided, applied to every existing line item on the invoice.",
           },
+          paid_in_cash: {
+            type: "boolean",
+            description:
+              "Mark the invoice as paid in cash (accountable-person / petty-cash payment).",
+          },
+          cash_accounts_id: {
+            type: "number",
+            description:
+              "Cash account code when paid_in_cash is true. Call list_accounts for this company.",
+          },
+          cash_accounts_dimensions_id: {
+            type: "number",
+            description:
+              "Cash account dimension ID. Call list_account_dimensions for this company.",
+          },
+          cash_payment_date: {
+            type: "string",
+            description: "Cash payment date (YYYY-MM-DD).",
+          },
         },
         required: ["id"],
       },
@@ -1171,6 +1221,11 @@ export function createInvoiceTools(client: EFinancialsClient) {
           vat_price: updateParams.vat_amount ?? current.vat_price ?? 0,
           notes: updateParams.description ?? current.notes,
           items,
+          paid_in_cash: updateParams.paid_in_cash ?? current.paid_in_cash,
+          cash_accounts_id: updateParams.cash_accounts_id ?? current.cash_accounts_id,
+          cash_accounts_dimensions_id:
+            updateParams.cash_accounts_dimensions_id ?? current.cash_accounts_dimensions_id,
+          cash_payment_date: updateParams.cash_payment_date ?? current.cash_payment_date,
         };
 
         const response = await client.patch<PurchaseInvoice>(
@@ -1351,7 +1406,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
 
     upload_purchase_invoice_file: {
       description:
-        "Upload a PDF or other file attachment to a purchase invoice. Accepts a local path or inline base64:<data> / base64:<ext>:<data> (max 10 MiB).",
+        "Upload a PDF or other file attachment to a purchase invoice. Accepts a local path, https:// URL, or inline base64:<data> / base64:<ext>:<data> (max 10 MiB).",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -1362,7 +1417,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
           file_path: {
             type: "string",
             description:
-              "Local path or base64:<data> / base64:<ext>:<data>. If MCP_FILE_UPLOAD_ROOT is set, path inputs must be relative to that directory.",
+              "Local path, https:// URL (server fetches the bytes), or base64:<data> / base64:<ext>:<data>. If MCP_FILE_UPLOAD_ROOT is set, path inputs must be relative to that directory. Max 10 MiB.",
           },
         },
         required: ["invoice_id", "file_path"],

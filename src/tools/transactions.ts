@@ -503,7 +503,7 @@ export function createTransactionTools(client: EFinancialsClient) {
 
     upload_transaction_file: {
       description:
-        "Upload a file to a bank transaction (PUT .../document_user). Accepts a local path or inline base64:<data> / base64:<ext>:<data> (max 10 MiB). Sent as OpenAPI ApiFile.",
+        "Upload a file to a bank transaction (PUT .../document_user). Accepts a local path, https:// URL, or inline base64:<data> / base64:<ext>:<data> (max 10 MiB). Sent as OpenAPI ApiFile.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -514,7 +514,7 @@ export function createTransactionTools(client: EFinancialsClient) {
           file_path: {
             type: "string",
             description:
-              "Local path or base64:<data> / base64:<ext>:<data>. If MCP_FILE_UPLOAD_ROOT is set, path inputs must be relative to that directory.",
+              "Local path, https:// URL (server fetches the bytes), or base64:<data> / base64:<ext>:<data>. If MCP_FILE_UPLOAD_ROOT is set, path inputs must be relative to that directory. Max 10 MiB.",
           },
         },
         required: ["id", "file_path"],

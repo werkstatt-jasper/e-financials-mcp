@@ -113,6 +113,83 @@ describe("createPurchaseInvoiceWithRepair", () => {
     ).rejects.toThrow(/currency_rate/);
   });
 
+  it("derives header VAT from line rates when vat_amount is omitted", async () => {
+    await createPurchaseInvoiceWithRepair(client, {
+      clients_id: 1,
+      client_name: "Sup",
+      invoice_no: "P-VAT",
+      invoice_date: "2025-06-01",
+      items: [{ custom_title: "Legal", total_net_price: 14.54, vat_rate: 22 }],
+    });
+    expect(client.post).toHaveBeenCalledWith(
+      "/v1/purchase_invoices",
+      expect.objectContaining({
+        vat_price: 3.2,
+        gross_price: 17.74,
+      }),
+    );
+  });
+
+  it("prefers derived line totals over a conflicting total_amount", async () => {
+    await createPurchaseInvoiceWithRepair(client, {
+      clients_id: 1,
+      client_name: "Sup",
+      invoice_no: "P-CONFLICT",
+      invoice_date: "2025-06-01",
+      total_amount: 22,
+      items: [{ custom_title: "Legal", total_net_price: 14.54, vat_rate: 22 }],
+    });
+    expect(client.post).toHaveBeenCalledWith(
+      "/v1/purchase_invoices",
+      expect.objectContaining({
+        vat_price: 3.2,
+        gross_price: 17.74,
+      }),
+    );
+  });
+
+  it("derives VAT from vat_rate on friendly params when vat_amount omitted", async () => {
+    await createPurchaseInvoiceWithRepair(client, {
+      clients_id: 1,
+      client_name: "Sup",
+      invoice_no: "P-FRIENDLY-VAT",
+      invoice_date: "2025-06-01",
+      total_amount: 122,
+      vat_rate: 22,
+    });
+    const body = vi.mocked(client.post).mock.calls[0][1] as {
+      vat_price: number;
+      gross_price: number;
+      items: { total_net_price: number }[];
+    };
+    expect(body.vat_price).toBe(22);
+    expect(body.gross_price).toBe(122);
+    expect(body.items[0].total_net_price).toBe(100);
+  });
+
+  it("posts cash-payment fields when provided", async () => {
+    await createPurchaseInvoiceWithRepair(client, {
+      clients_id: 1,
+      client_name: "Sup",
+      invoice_no: "P-CASH",
+      invoice_date: "2025-06-01",
+      total_amount: 50,
+      paid_in_cash: true,
+      cash_accounts_id: 1360,
+      cash_accounts_dimensions_id: 407164,
+      cash_payment_date: "2025-06-01",
+    });
+    expect(client.post).toHaveBeenCalledWith(
+      "/v1/purchase_invoices",
+      expect.objectContaining({
+        paid_in_cash: true,
+        cash_accounts_id: 1360,
+        cash_accounts_dimensions_id: 407164,
+        cash_payment_date: "2025-06-01",
+      }),
+    );
+  });
+
   it("supports multi-line items", async () => {
     await createPurchaseInvoiceWithRepair(client, {
       clients_id: 1,
