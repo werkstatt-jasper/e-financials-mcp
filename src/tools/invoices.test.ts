@@ -732,7 +732,6 @@ describe("invoice tools", () => {
       total_amount: 50,
       paid_in_cash: true,
       cash_accounts_id: 1360,
-      cash_accounts_dimensions_id: 407164,
       cash_payment_date: "2025-06-01",
     });
     expect(client.post).toHaveBeenCalledWith(
@@ -740,10 +739,27 @@ describe("invoice tools", () => {
       expect.objectContaining({
         paid_in_cash: true,
         cash_accounts_id: 1360,
-        cash_accounts_dimensions_id: 407164,
         cash_payment_date: "2025-06-01",
       }),
     );
+    expect(vi.mocked(client.post).mock.calls[0][1]).not.toHaveProperty(
+      "cash_accounts_dimensions_id",
+    );
+  });
+
+  it("create_purchase_invoice rejects cash_accounts_dimensions_id", async () => {
+    mockPurchaseCreateFlow();
+    await expect(
+      tools.create_purchase_invoice.handler({
+        clients_id: 1,
+        client_name: "Sup",
+        invoice_no: "INV-CASH-DIM",
+        invoice_date: "2025-06-01",
+        total_amount: 50,
+        cash_accounts_dimensions_id: 407164,
+      }),
+    ).rejects.toThrow(/rejects cash_accounts_dimensions_id/);
+    expect(client.post).not.toHaveBeenCalled();
   });
 
   it("create_purchase_invoice accepts term_days 0", async () => {
@@ -784,6 +800,9 @@ describe("invoice tools", () => {
     expect(dim).not.toMatch(/6488057|12637323/);
     expect(article).toMatch(/list_purchase_articles/);
     expect(article).not.toMatch(/6488057/);
+    const cashDim = tools.create_purchase_invoice.inputSchema.properties.cash_accounts_dimensions_id
+      .description as string;
+    expect(cashDim).toMatch(/rejects this field|web UI/);
   });
 
   it("update_purchase_invoice gets current then patches", async () => {
@@ -875,7 +894,6 @@ describe("invoice tools", () => {
       id: 11,
       paid_in_cash: true,
       cash_accounts_id: 1360,
-      cash_accounts_dimensions_id: 407164,
       cash_payment_date: "2025-06-02",
     });
     expect(client.patch).toHaveBeenCalledWith(
@@ -883,10 +901,36 @@ describe("invoice tools", () => {
       expect.objectContaining({
         paid_in_cash: true,
         cash_accounts_id: 1360,
-        cash_accounts_dimensions_id: 407164,
         cash_payment_date: "2025-06-02",
       }),
     );
+    expect(vi.mocked(client.patch).mock.calls[0][1]).not.toHaveProperty(
+      "cash_accounts_dimensions_id",
+    );
+  });
+
+  it("update_purchase_invoice rejects cash_accounts_dimensions_id", async () => {
+    vi.mocked(client.get).mockResolvedValueOnce({
+      ...invoicesFixture.purchase_get_for_patch,
+    } as never);
+    await expect(
+      tools.update_purchase_invoice.handler({
+        id: 11,
+        cash_accounts_dimensions_id: 407164,
+      }),
+    ).rejects.toThrow(/rejects cash_accounts_dimensions_id/);
+    expect(client.patch).not.toHaveBeenCalled();
+  });
+
+  it("update_purchase_invoice refuses invoices that already have a cash dimension", async () => {
+    vi.mocked(client.get).mockResolvedValueOnce({
+      ...invoicesFixture.purchase_get_for_patch,
+      cash_accounts_dimensions_id: 41442,
+    } as never);
+    await expect(
+      tools.update_purchase_invoice.handler({ id: 11, description: "x" }),
+    ).rejects.toThrow(/already has cash_accounts_dimensions_id/);
+    expect(client.patch).not.toHaveBeenCalled();
   });
 
   it("update_purchase_invoice accepts term_days 0", async () => {

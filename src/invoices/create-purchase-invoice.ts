@@ -2,6 +2,7 @@ import type { EFinancialsClient } from "../client.js";
 import { formatVatRateDropdown, parseVatRateDropdown, roundMoney } from "../money.js";
 import type { PurchaseArticle } from "../types/accounts.js";
 import type { PurchaseInvoice } from "../types/invoice.js";
+import { assertCashAccountsDimensionWritable } from "./cash-accounts-dimension.js";
 import { buildPurchaseInvoiceTotalsPatch } from "./purchase-invoice-patch.js";
 import {
   applyPurchaseVatDefaults,
@@ -142,6 +143,8 @@ export async function createPurchaseInvoiceWithRepair(
   client: EFinancialsClient,
   input: CreatePurchaseInvoiceInput,
 ): Promise<CreatePurchaseInvoiceResult> {
+  assertCashAccountsDimensionWritable({ requested: input.cash_accounts_dimensions_id });
+
   const currency = input.cl_currencies_id ?? "EUR";
   if (currency !== "EUR" && (input.currency_rate == null || input.currency_rate <= 0)) {
     throw new Error("currency_rate is required when cl_currencies_id is not EUR");
@@ -240,9 +243,6 @@ export async function createPurchaseInvoiceWithRepair(
   }
   if (input.cash_accounts_id !== undefined) {
     postBody.cash_accounts_id = input.cash_accounts_id;
-  }
-  if (input.cash_accounts_dimensions_id !== undefined) {
-    postBody.cash_accounts_dimensions_id = input.cash_accounts_dimensions_id;
   }
   if (input.cash_payment_date !== undefined) {
     postBody.cash_payment_date = input.cash_payment_date;

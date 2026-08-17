@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { EFinancialsClient } from "../client.js";
+import { assertCashAccountsDimensionWritable } from "../invoices/cash-accounts-dimension.js";
 import { createPurchaseInvoiceWithRepair } from "../invoices/create-purchase-invoice.js";
 import { registerPurchaseInvoiceWithRepair } from "../invoices/register-purchase-invoice.js";
 import { validateInvoiceData } from "../invoices/validate-invoice-data.js";
@@ -707,7 +708,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
           cash_accounts_dimensions_id: {
             type: "number",
             description:
-              "Cash account dimension ID when that account has dimensions. Call list_account_dimensions for this company.",
+              "Cash account dimension ID. RIK currently rejects this field on create/update (Invalid accounts_id missing for dimension) even when the dimension belongs to cash_accounts_id. Set it in the e-Financials web UI. paid_in_cash, cash_accounts_id, and cash_payment_date still work.",
           },
           cash_payment_date: {
             type: "string",
@@ -1190,7 +1191,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
           cash_accounts_dimensions_id: {
             type: "number",
             description:
-              "Cash account dimension ID. Call list_account_dimensions for this company.",
+              "Cash account dimension ID. RIK currently rejects this field on create/update (Invalid accounts_id missing for dimension) even when the dimension belongs to cash_accounts_id. Set it in the e-Financials web UI. paid_in_cash, cash_accounts_id, and cash_payment_date still work.",
           },
           cash_payment_date: {
             type: "string",
@@ -1208,6 +1209,10 @@ export function createInvoiceTools(client: EFinancialsClient) {
         // Fetch current invoice to get required fields (API requires all fields in PATCH)
         const currentResponse = await client.get(`/v1/purchase_invoices/${id}`);
         const current = currentResponse as unknown as Record<string, unknown>;
+        assertCashAccountsDimensionWritable({
+          requested: updateParams.cash_accounts_dimensions_id,
+          current: current.cash_accounts_dimensions_id,
+        });
 
         const items =
           updateParams.reversed_vat_id !== undefined
@@ -1232,8 +1237,6 @@ export function createInvoiceTools(client: EFinancialsClient) {
           items,
           paid_in_cash: updateParams.paid_in_cash ?? current.paid_in_cash,
           cash_accounts_id: updateParams.cash_accounts_id ?? current.cash_accounts_id,
-          cash_accounts_dimensions_id:
-            updateParams.cash_accounts_dimensions_id ?? current.cash_accounts_dimensions_id,
           cash_payment_date: updateParams.cash_payment_date ?? current.cash_payment_date,
         };
 
