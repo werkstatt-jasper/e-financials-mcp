@@ -185,11 +185,13 @@ const deliverSalesInvoiceSchema = z.object({
 const uploadSalesInvoiceUserFileSchema = z.object({
   id: positiveInt,
   file_path: z.string().min(1),
+  filename: optionalString,
 });
 
 const uploadPurchaseInvoiceFileSchema = z.object({
   invoice_id: positiveInt,
   file_path: z.string().min(1),
+  filename: optionalString,
 });
 
 export function createInvoiceTools(client: EFinancialsClient) {
@@ -1003,12 +1005,19 @@ export function createInvoiceTools(client: EFinancialsClient) {
             description:
               "Local path, https:// URL (server fetches the bytes), or base64:<data> / base64:<ext>:<data>. If MCP_FILE_UPLOAD_ROOT is set, path inputs must be relative to that directory. Max 10 MiB.",
           },
+          filename: {
+            type: "string",
+            description:
+              "Optional archive name (e.g. Invoice-6390.pdf). Wins over Content-Disposition and the URL path. Use this when the URL ends in a generic script name such as download.aspx.",
+          },
         },
         required: ["id", "file_path"],
       },
       handler: async (params: unknown) => {
         const args = parseToolArgs(uploadSalesInvoiceUserFileSchema, params);
-        const { buffer, filename } = await resolveFileInput(args.file_path);
+        const { buffer, filename } = await resolveFileInput(args.file_path, {
+          filename: args.filename,
+        });
         const base64Content = buffer.toString("base64");
 
         const response = await client.put(`/v1/sale_invoices/${args.id}/document_user`, {
@@ -1419,12 +1428,19 @@ export function createInvoiceTools(client: EFinancialsClient) {
             description:
               "Local path, https:// URL (server fetches the bytes), or base64:<data> / base64:<ext>:<data>. If MCP_FILE_UPLOAD_ROOT is set, path inputs must be relative to that directory. Max 10 MiB.",
           },
+          filename: {
+            type: "string",
+            description:
+              "Optional archive name (e.g. Invoice-6390.pdf). Wins over Content-Disposition and the URL path. Use this when the URL ends in a generic script name such as download.aspx.",
+          },
         },
         required: ["invoice_id", "file_path"],
       },
       handler: async (params: unknown) => {
         const args = parseToolArgs(uploadPurchaseInvoiceFileSchema, params);
-        const { buffer, filename } = await resolveFileInput(args.file_path);
+        const { buffer, filename } = await resolveFileInput(args.file_path, {
+          filename: args.filename,
+        });
         const base64Content = buffer.toString("base64");
 
         const response = await client.put(

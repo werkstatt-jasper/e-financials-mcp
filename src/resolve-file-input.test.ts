@@ -2,7 +2,13 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MAX_BASE64_UPLOAD_BYTES, resolveFileInput } from "./resolve-file-input.js";
+import {
+  applyFilenameOverride,
+  MAX_BASE64_UPLOAD_BYTES,
+  parseContentDispositionFilename,
+  resolveFileInput,
+  sanitizeUploadFilename,
+} from "./resolve-file-input.js";
 
 describe("resolveFileInput", () => {
   beforeEach(() => {
@@ -326,6 +332,117 @@ describe("resolveFileInput URL mode", () => {
     }
   });
 
+  it("prefers Content-Disposition over a generic download.aspx path", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        mockResponse({
+          headers: {
+            "content-type": "application/pdf",
+            "content-disposition": 'attachment; filename="Invoice-DFMZYDAL-0004.pdf"',
+          },
+          body: Buffer.from("%PDF-1.4 onedrive"),
+        }),
+      ),
+    );
+    const result = await resolveFileInput(
+      "https://my.microsoftpersonalcontent.com/personal/id/_layouts/15/download.aspx?share=abc",
+    );
+    expect(result.filename).toBe("Invoice-DFMZYDAL-0004.pdf");
+    expect(result.extension).toBe(".pdf");
+  });
+
+  it("decodes RFC 5987 filename*", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        mockResponse({
+          headers: {
+            "content-type": "application/pdf",
+            "content-disposition": "attachment; filename*=UTF-8''Arve%20%C3%B5.pdf",
+          },
+          body: Buffer.from("%PDF-1.4"),
+        }),
+      ),
+    );
+    const result = await resolveFileInput("https://example.com/download.aspx");
+    expect(result.filename).toBe("Arve õ.pdf");
+  });
+
+  it("uses caller filename over Content-Disposition", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        mockResponse({
+          headers: {
+            "content-type": "application/pdf",
+            "content-disposition": 'attachment; filename="from-header.pdf"',
+          },
+          body: Buffer.from("%PDF-1.4"),
+        }),
+      ),
+    );
+    const result = await resolveFileInput("https://example.com/download.aspx", {
+      filename: "Invoice-6390.pdf",
+    });
+    expect(result.filename).toBe("Invoice-6390.pdf");
+  });
+
+  it("sniffs PDF magic when the URL path is a generic script name", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(mockResponse({ body: Buffer.from("%PDF-1.4 bytes") })),
+    );
+    const result = await resolveFileInput("https://example.com/_layouts/15/download.aspx?share=x");
+    expect(result.filename).toBe("upload.pdf");
+    expect(result.extension).toBe(".pdf");
+  });
+
+  it("uses disposition extension when Content-Type is missing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        mockResponse({
+          headers: { "content-disposition": "attachment; filename=export.csv" },
+          body: Buffer.from("a,b\n"),
+        }),
+      ),
+    );
+    const result = await resolveFileInput("https://example.com/download.aspx");
+    expect(result.filename).toBe("export.csv");
+    expect(result.extension).toBe(".csv");
+  });
+
+  it("falls back to sniffed type when disposition has no allowed extension", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        mockResponse({
+          headers: {
+            "content-disposition": 'attachment; filename="notes.exe"',
+          },
+          body: Buffer.from("%PDF-1.4"),
+        }),
+      ),
+    );
+    const result = await resolveFileInput("https://example.com/download.aspx");
+    expect(result.filename).toBe("notes.pdf");
+  });
+
+  it("applies filename override on a filesystem path", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "file-input-"));
+    const file = path.join(dir, "scan.pdf");
+    await writeFile(file, "%PDF-1.4");
+    const result = await resolveFileInput(file, { filename: "Invoice-6390.pdf" });
+    expect(result.filename).toBe("Invoice-6390.pdf");
+  });
+
+  it("ignores empty filename override", async () => {
+    const payload = Buffer.from("%PDF-1.4").toString("base64");
+    const result = await resolveFileInput(`base64:pdf:${payload}`, { filename: "   " });
+    expect(result.filename).toBe("upload.pdf");
+  });
+
   it("ignores empty Content-Type mime and falls back to path", async () => {
     vi.stubGlobal(
       "fetch",
@@ -338,5 +455,69 @@ describe("resolveFileInput URL mode", () => {
     );
     const result = await resolveFileInput("https://example.com/export.csv");
     expect(result.extension).toBe(".csv");
+  });
+});
+
+describe("parseContentDispositionFilename", () => {
+  it("returns undefined for missing or empty headers", () => {
+    expect(parseContentDispositionFilename(null)).toBeUndefined();
+    expect(parseContentDispositionFilename("")).toBeUndefined();
+    expect(parseContentDispositionFilename("inline")).toBeUndefined();
+  });
+
+  it("parses quoted, escaped, and unquoted filename", () => {
+    expect(parseContentDispositionFilename('attachment; filename="a.pdf"')).toBe("a.pdf");
+    expect(parseContentDispositionFilename('attachment; filename="in\\"voice.pdf"')).toBe(
+      'in"voice.pdf',
+    );
+    expect(parseContentDispositionFilename("attachment; filename=plain.pdf")).toBe("plain.pdf");
+  });
+
+  it("takes basename and rejects . / ..", () => {
+    expect(parseContentDispositionFilename('attachment; filename="../../etc/passwd.pdf"')).toBe(
+      "passwd.pdf",
+    );
+    expect(parseContentDispositionFilename('attachment; filename="."')).toBeUndefined();
+    expect(parseContentDispositionFilename("attachment; filename=..")).toBeUndefined();
+  });
+
+  it("ignores malformed filename* and falls back to filename", () => {
+    expect(
+      parseContentDispositionFilename("attachment; filename*=UTF-8''%ZZ.pdf; filename=\"ok.pdf\""),
+    ).toBe("ok.pdf");
+  });
+
+  it("decodes iso-8859-1 filename*", () => {
+    expect(parseContentDispositionFilename("attachment; filename*=iso-8859-1''plain.pdf")).toBe(
+      "plain.pdf",
+    );
+  });
+
+  it("skips filename* that decodes to . or ..", () => {
+    expect(parseContentDispositionFilename("attachment; filename*=UTF-8''.")).toBeUndefined();
+    expect(parseContentDispositionFilename("attachment; filename*=UTF-8''..")).toBeUndefined();
+  });
+});
+
+describe("sanitizeUploadFilename / applyFilenameOverride", () => {
+  it("uses fallback extension when missing or unsupported", () => {
+    expect(sanitizeUploadFilename("Invoice-6390", ".pdf")).toBe("Invoice-6390.pdf");
+    expect(sanitizeUploadFilename("notes.exe", ".pdf")).toBe("notes.pdf");
+    expect(sanitizeUploadFilename("scan.jpeg", ".png")).toBe("scan.jpg");
+  });
+
+  it("rejects empty names and unsupported fallbacks", () => {
+    expect(() => sanitizeUploadFilename(".", ".pdf")).toThrow(/empty or invalid/);
+    expect(() => sanitizeUploadFilename("..", ".pdf")).toThrow(/empty or invalid/);
+    expect(() => sanitizeUploadFilename("   ", ".pdf")).toThrow(/empty or invalid/);
+    expect(() => sanitizeUploadFilename("x", ".exe")).toThrow(/Unsupported/);
+  });
+
+  it("overrides resolved names and leaves empty overrides alone", () => {
+    const resolved = { buffer: Buffer.from("x"), filename: "upload.pdf", extension: ".pdf" };
+    expect(applyFilenameOverride(resolved).filename).toBe("upload.pdf");
+    expect(applyFilenameOverride(resolved, undefined).filename).toBe("upload.pdf");
+    expect(applyFilenameOverride(resolved, "  ").filename).toBe("upload.pdf");
+    expect(applyFilenameOverride(resolved, "Invoice-6390.pdf").filename).toBe("Invoice-6390.pdf");
   });
 });
