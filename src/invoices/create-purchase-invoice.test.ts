@@ -176,7 +176,6 @@ describe("createPurchaseInvoiceWithRepair", () => {
       total_amount: 50,
       paid_in_cash: true,
       cash_accounts_id: 1360,
-      cash_accounts_dimensions_id: 407164,
       cash_payment_date: "2025-06-01",
     });
     expect(client.post).toHaveBeenCalledWith(
@@ -184,10 +183,26 @@ describe("createPurchaseInvoiceWithRepair", () => {
       expect.objectContaining({
         paid_in_cash: true,
         cash_accounts_id: 1360,
-        cash_accounts_dimensions_id: 407164,
         cash_payment_date: "2025-06-01",
       }),
     );
+    expect(vi.mocked(client.post).mock.calls[0][1]).not.toHaveProperty(
+      "cash_accounts_dimensions_id",
+    );
+  });
+
+  it("rejects cash_accounts_dimensions_id before POST", async () => {
+    await expect(
+      createPurchaseInvoiceWithRepair(client, {
+        clients_id: 1,
+        client_name: "Sup",
+        invoice_no: "P-CASH-DIM",
+        invoice_date: "2025-06-01",
+        total_amount: 50,
+        cash_accounts_dimensions_id: 407164,
+      }),
+    ).rejects.toThrow(/rejects cash_accounts_dimensions_id/);
+    expect(client.post).not.toHaveBeenCalled();
   });
 
   it("supports multi-line items", async () => {
