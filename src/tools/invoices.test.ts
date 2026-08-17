@@ -375,6 +375,64 @@ describe("invoice tools", () => {
     expect(client.patch).toHaveBeenCalledWith("/v1/sale_invoices/10/deliver", {});
   });
 
+  it("upload_purchase_invoice_file uses Content-Disposition over download.aspx", async () => {
+    const pdf = Buffer.from("%PDF-1.4");
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 200,
+      ok: true,
+      headers: new Headers({
+        "content-type": "application/pdf",
+        "content-disposition": 'attachment; filename="Invoice-DFMZYDAL-0004.pdf"',
+      }),
+      arrayBuffer: async () => pdf.buffer.slice(pdf.byteOffset, pdf.byteOffset + pdf.byteLength),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.mocked(client.put).mockResolvedValue({ ...invoicesFixture.upload_put_ok } as never);
+
+    try {
+      await tools.upload_purchase_invoice_file.handler({
+        invoice_id: 12,
+        file_path:
+          "https://my.microsoftpersonalcontent.com/personal/id/_layouts/15/download.aspx?share=abc",
+      });
+      expect(client.put).toHaveBeenCalledWith("/v1/purchase_invoices/12/document_user", {
+        name: "Invoice-DFMZYDAL-0004.pdf",
+        contents: pdf.toString("base64"),
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("upload_purchase_invoice_file prefers explicit filename over headers", async () => {
+    const pdf = Buffer.from("%PDF-1.4");
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 200,
+      ok: true,
+      headers: new Headers({
+        "content-type": "application/pdf",
+        "content-disposition": 'attachment; filename="from-header.pdf"',
+      }),
+      arrayBuffer: async () => pdf.buffer.slice(pdf.byteOffset, pdf.byteOffset + pdf.byteLength),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.mocked(client.put).mockResolvedValue({ ...invoicesFixture.upload_put_ok } as never);
+
+    try {
+      await tools.upload_purchase_invoice_file.handler({
+        invoice_id: 12,
+        file_path: "https://example.com/download.aspx",
+        filename: "Invoice-6390.pdf",
+      });
+      expect(client.put).toHaveBeenCalledWith("/v1/purchase_invoices/12/document_user", {
+        name: "Invoice-6390.pdf",
+        contents: pdf.toString("base64"),
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("upload_purchase_invoice_file fetches an https URL", async () => {
     const pdf = Buffer.from("%PDF-1.4");
     const fetchMock = vi.fn().mockResolvedValue({

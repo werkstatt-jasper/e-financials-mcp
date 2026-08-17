@@ -163,6 +163,7 @@ const updateJournalSchema = z.object({
 const uploadJournalFileSchema = z.object({
   journals_id: positiveInt,
   file_path: z.string().min(1),
+  filename: optionalString,
 });
 
 function normalizePostingsForApi(postings: unknown): Posting[] {
@@ -440,12 +441,19 @@ export function createJournalTools(client: EFinancialsClient) {
             description:
               "Local path, https:// URL (server fetches the bytes), or base64:<data> / base64:<ext>:<data>. If MCP_FILE_UPLOAD_ROOT is set, path inputs must be relative to that directory. Max 10 MiB.",
           },
+          filename: {
+            type: "string",
+            description:
+              "Optional archive name (e.g. Invoice-6390.pdf). Wins over Content-Disposition and the URL path.",
+          },
         },
         required: ["journals_id", "file_path"],
       },
       handler: async (params: unknown) => {
         const args = parseToolArgs(uploadJournalFileSchema, params);
-        const { buffer, filename } = await resolveFileInput(args.file_path);
+        const { buffer, filename } = await resolveFileInput(args.file_path, {
+          filename: args.filename,
+        });
         const base64Content = buffer.toString("base64");
 
         const response = await client.put(`/v1/journals/${args.journals_id}/document_user`, {

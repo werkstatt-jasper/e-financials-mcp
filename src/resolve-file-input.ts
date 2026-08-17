@@ -16,6 +16,11 @@ export interface ResolvedFileInput {
   extension: string;
 }
 
+export interface ResolveFileInputOptions {
+  /** Archive name; wins over Content-Disposition and the URL/path name. */
+  filename?: string;
+}
+
 interface MagicSignature {
   extensions: [string, ...string[]];
   prefix: Uint8Array;
@@ -141,16 +146,108 @@ function extensionFromContentType(contentType: string | null): string | undefine
   return mime ? CONTENT_TYPE_EXTENSION[mime] : undefined;
 }
 
-function filenameFromUrl(url: string, extension: string): string {
+function extensionFromUrlPath(url: string): string | undefined {
   const pathname = new URL(url).pathname;
-  const last = pathname.split("/").filter(Boolean).pop();
-  if (last?.includes(".")) {
-    return last;
+  const last = pathname.split("/").filter(Boolean).pop() ?? "";
+  const dot = last.lastIndexOf(".");
+  if (dot <= 0) {
+    return undefined;
   }
-  return `upload${extension}`;
+  return normalizeExtensionHint(last.slice(dot + 1));
 }
 
-type FetchedUrl = { buffer: Buffer; finalUrl: string; contentType: string | null };
+function filenameFromUrl(url: string): string | undefined {
+  const pathname = new URL(url).pathname;
+  const last = pathname.split("/").filter(Boolean).pop();
+  if (!last?.includes(".")) {
+    return undefined;
+  }
+  const ext = normalizeExtensionHint(last.slice(last.lastIndexOf(".") + 1));
+  if (!ALLOWED_EXTENSIONS.has(ext)) {
+    return undefined;
+  }
+  return last;
+}
+
+/**
+ * Parse `Content-Disposition` `filename` / `filename*` (RFC 5987).
+ * Returns the basename only; does not validate the extension.
+ */
+export function parseContentDispositionFilename(header: string | null): string | undefined {
+  if (!header) {
+    return undefined;
+  }
+  const star = /filename\*\s*=\s*(?:UTF-8|iso-8859-1)''([^;\s]+)/i.exec(header);
+  if (star?.[1]) {
+    try {
+      const decoded = decodeURIComponent(star[1].replace(/['"]/g, ""));
+      const base = basename(decoded.replace(/\\/g, "/"));
+      if (base && base !== "." && base !== "..") {
+        return base;
+      }
+    } catch {
+      /* ignore malformed percent-encoding */
+    }
+  }
+  const quoted = /filename\s*=\s*"((?:[^"\\]|\\.)*)"/i.exec(header);
+  if (quoted?.[1]) {
+    const unescaped = quoted[1].replace(/\\(.)/g, "$1");
+    const base = basename(unescaped.replace(/\\/g, "/"));
+    if (base && base !== "." && base !== "..") {
+      return base;
+    }
+  }
+  const unquoted = /filename\s*=\s*([^;]+)/i.exec(header);
+  if (unquoted?.[1]) {
+    const raw = unquoted[1].trim().replace(/^["']|["']$/g, "");
+    const base = basename(raw.replace(/\\/g, "/"));
+    if (base && base !== "." && base !== "..") {
+      return base;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Turn a caller- or header-supplied name into a safe basename with an allowed
+ * extension. Missing/unsupported extensions fall back to `fallbackExtension`.
+ */
+export function sanitizeUploadFilename(name: string, fallbackExtension: string): string {
+  const base = basename(name.replace(/\\/g, "/")).trim();
+  if (!base || base === "." || base === "..") {
+    throw new Error("filename is empty or invalid");
+  }
+  const dot = base.lastIndexOf(".");
+  const stem = (dot > 0 ? base.slice(0, dot) : base).trim();
+  const hinted = dot > 0 ? normalizeExtensionHint(base.slice(dot + 1)) : undefined;
+  const extension = hinted && ALLOWED_EXTENSIONS.has(hinted) ? hinted : fallbackExtension;
+  if (!ALLOWED_EXTENSIONS.has(extension)) {
+    throw new Error(
+      `Unsupported file extension "${extension}". Allowed: ${[...ALLOWED_EXTENSIONS].join(", ")}`,
+    );
+  }
+  const safeStem = stem.replace(/[/\\]/g, "_").slice(0, 180);
+  return `${safeStem}${extension === ".jpeg" ? ".jpg" : extension}`;
+}
+
+export function applyFilenameOverride(
+  resolved: ResolvedFileInput,
+  override?: string,
+): ResolvedFileInput {
+  if (override == null || override.trim() === "") {
+    return resolved;
+  }
+  const filename = sanitizeUploadFilename(override, resolved.extension);
+  const extPart = filename.slice(filename.lastIndexOf("."));
+  return { ...resolved, filename, extension: normalizeExtensionHint(extPart.replace(/^\./, "")) };
+}
+
+type FetchedUrl = {
+  buffer: Buffer;
+  finalUrl: string;
+  contentType: string | null;
+  contentDisposition: string | null;
+};
 
 async function fetchHttpUrl(url: string, hops = 0): Promise<FetchedUrl> {
   if (hops > MAX_REDIRECTS) {
@@ -203,64 +300,81 @@ async function fetchHttpUrl(url: string, hops = 0): Promise<FetchedUrl> {
     );
   }
 
-  return { buffer, finalUrl: url, contentType: res.headers.get("content-type") };
+  return {
+    buffer,
+    finalUrl: url,
+    contentType: res.headers.get("content-type"),
+    contentDisposition: res.headers.get("content-disposition"),
+  };
 }
 
 async function resolveUrlInput(url: string): Promise<ResolvedFileInput> {
-  const { buffer, finalUrl, contentType } = await fetchHttpUrl(url);
+  const { buffer, finalUrl, contentType, contentDisposition } = await fetchHttpUrl(url);
   let extension = extensionFromContentType(contentType);
-  if (!extension) {
-    const pathname = new URL(finalUrl).pathname;
-    const last = pathname.split("/").filter(Boolean).pop() ?? "";
-    const dot = last.lastIndexOf(".");
-    if (dot > 0) {
-      extension = normalizeExtensionHint(last.slice(dot + 1));
+  const dispositionName = parseContentDispositionFilename(contentDisposition);
+  const pathName = filenameFromUrl(finalUrl);
+  const pathExt = extensionFromUrlPath(finalUrl);
+  if (!extension && dispositionName?.includes(".")) {
+    const hinted = normalizeExtensionHint(
+      dispositionName.slice(dispositionName.lastIndexOf(".") + 1),
+    );
+    if (ALLOWED_EXTENSIONS.has(hinted)) {
+      extension = hinted;
     }
+  }
+  if (!extension && pathName) {
+    extension = normalizeExtensionHint(pathName.slice(pathName.lastIndexOf(".") + 1));
   }
   if (!extension) {
     extension = sniffExtension(buffer);
   }
   if (!extension) {
+    if (pathExt && !ALLOWED_EXTENSIONS.has(pathExt)) {
+      throw new Error(
+        `Unsupported file extension "${pathExt}". Allowed: ${[...ALLOWED_EXTENSIONS].join(", ")}`,
+      );
+    }
     throw new Error(
       "Ambiguous URL payload: could not determine file type from Content-Type, URL path, or file bytes",
     );
   }
-  if (!ALLOWED_EXTENSIONS.has(extension)) {
-    throw new Error(
-      `Unsupported file extension "${extension}". Allowed: ${[...ALLOWED_EXTENSIONS].join(", ")}`,
-    );
-  }
-  return { buffer, filename: filenameFromUrl(finalUrl, extension), extension };
+  const picked = dispositionName
+    ? sanitizeUploadFilename(dispositionName, extension)
+    : (pathName ?? sanitizeUploadFilename("upload", extension));
+  return { buffer, filename: picked, extension };
 }
 
 /**
  * Resolve a tool `file_path` that is a filesystem path, an `https://` URL,
  * or an inline `base64:<data>` / `base64:<ext>:<data>` payload.
  */
-export async function resolveFileInput(filePath: string): Promise<ResolvedFileInput> {
+export async function resolveFileInput(
+  filePath: string,
+  options?: ResolveFileInputOptions,
+): Promise<ResolvedFileInput> {
   const trimmed = filePath.trim();
   if (trimmed === "") {
     throw new Error("file_path must be a non-empty path or base64 payload");
   }
 
+  let resolved: ResolvedFileInput;
   if (trimmed.toLowerCase().startsWith(BASE64_PREFIX)) {
-    return resolveBase64Input(trimmed);
+    resolved = resolveBase64Input(trimmed);
+  } else if (URL_SCHEME.test(trimmed)) {
+    resolved = await resolveUrlInput(trimmed);
+  } else {
+    const resolvedPath = await resolveUploadFilePath(trimmed);
+    const buffer = await readFile(resolvedPath);
+    if (buffer.length > MAX_BASE64_UPLOAD_BYTES) {
+      throw new Error(
+        `file_too_large: file exceeds ${MAX_BASE64_UPLOAD_BYTES / 1024 / 1024} MB limit`,
+      );
+    }
+    const filename = basename(resolvedPath);
+    const parts = filename.split(".");
+    const extPart = parts.length > 1 ? parts[parts.length - 1] : "bin";
+    const extension = normalizeExtensionHint(extPart);
+    resolved = { buffer, filename, extension };
   }
-
-  if (URL_SCHEME.test(trimmed)) {
-    return resolveUrlInput(trimmed);
-  }
-
-  const resolvedPath = await resolveUploadFilePath(trimmed);
-  const buffer = await readFile(resolvedPath);
-  if (buffer.length > MAX_BASE64_UPLOAD_BYTES) {
-    throw new Error(
-      `file_too_large: file exceeds ${MAX_BASE64_UPLOAD_BYTES / 1024 / 1024} MB limit`,
-    );
-  }
-  const filename = basename(resolvedPath);
-  const parts = filename.split(".");
-  const extPart = parts.length > 1 ? parts[parts.length - 1] : "bin";
-  const extension = normalizeExtensionHint(extPart);
-  return { buffer, filename, extension };
+  return applyFilenameOverride(resolved, options?.filename);
 }

@@ -130,7 +130,7 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 | `register_transaction` | Confirm with full `distributions[]` (`accounts` / `purchase_invoices` / `sale_invoices`). UI equivalent of Add a row + Save and confirm. |
 | `invalidate_transaction` | Reverse registration. |
 | `get_transaction_file` | GET attached file. |
-| `upload_transaction_file` | Upload file from local path or `base64:<data>` / `base64:<ext>:<data>` (max 10 MiB). |
+| `upload_transaction_file` | Upload file from local path, `https://` URL, or `base64:<data>` / `base64:<ext>:<data>` (max 10 MiB). Optional `filename` overrides Content-Disposition / URL path. |
 | `delete_transaction_file` | DELETE attached file. |
 
 ### Clients
@@ -166,7 +166,7 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 | `get_sales_invoice_xml` | System e-invoice XML. |
 | `get_sales_invoice_pdf_system` | System PDF. |
 | `get_sales_invoice_user_file` | User-uploaded file. |
-| `upload_sales_invoice_user_file` | Upload file (path or inline base64; max 10 MiB). |
+| `upload_sales_invoice_user_file` | Upload file (path, `https://` URL, or inline base64; max 10 MiB). Optional `filename`. |
 | `delete_sales_invoice_user_file` | Delete user file. |
 | `get_sales_invoice_delivery_options` | Delivery options (e-invoice/email). |
 | `deliver_sales_invoice` | Send e-invoice/email. |
@@ -175,7 +175,7 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 | `register_purchase_invoice` | Confirm purchase invoice after optional vat/gross repair from item sums. |
 | `invalidate_purchase_invoice` | Reverse purchase confirmation. |
 | `get_purchase_invoice_user_file` | User-uploaded file. |
-| `upload_purchase_invoice_file` | Upload file (path or inline base64; max 10 MiB). |
+| `upload_purchase_invoice_file` | Upload file (path, `https://` URL, or inline base64; max 10 MiB). Optional `filename`. |
 | `delete_purchase_invoice_user_file` | Delete user file. |
 
 ### Invoice settings
@@ -214,7 +214,7 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 | `register_journal` | Register journal. |
 | `invalidate_journal` | Reverse registration. |
 | `get_journal_file` | GET attached file. |
-| `upload_journal_file` | Upload file (path or inline base64; max 10 MiB). |
+| `upload_journal_file` | Upload file (path, `https://` URL, or inline base64; max 10 MiB). Optional `filename`. |
 | `delete_journal_file` | Delete file. |
 
 ### Accounts
