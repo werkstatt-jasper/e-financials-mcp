@@ -3,8 +3,10 @@ import type { EFinancialsClient } from "../client.js";
 import {
   type AccountBalance,
   computeAllBalances,
+  EMPTY_LEDGER_WARNING,
   OPENING_BALANCE_API_WARNING,
   sumCategory,
+  UNKNOWN_ACCOUNT_BALANCE_WARNING,
 } from "../financial-statements/balances.js";
 import {
   JournalListTruncatedError,
@@ -46,6 +48,17 @@ async function loadAccounts(client: EFinancialsClient): Promise<Account[]> {
   return client.getAllPages<Account>("/v1/accounts");
 }
 
+function statementWarnings(balances: AccountBalance[]): string[] {
+  const warnings = [OPENING_BALANCE_API_WARNING];
+  if (balances.some((b) => b.unknown_account === true)) {
+    warnings.push(UNKNOWN_ACCOUNT_BALANCE_WARNING);
+  }
+  if (balances.length === 0) {
+    warnings.push(EMPTY_LEDGER_WARNING);
+  }
+  return warnings;
+}
+
 /**
  * Read-only ledger statements from registered journal postings (EUR base).
  */
@@ -53,7 +66,7 @@ export function createFinancialStatementTools(client: EFinancialsClient) {
   return {
     compute_trial_balance: {
       description:
-        "Compute a trial balance (käibeandmik) from registered journal postings. Optional date_from/date_to filter on journal effective_date. Amounts use EUR base_amount when present. Refuses incomplete loads when the journal list exceeds the page cap — narrow dates. Opening-balance UI entries may be missing from the API.",
+        "Compute a trial balance (käibeandmik) from registered journal postings. Optional date_from/date_to filter on journal effective_date. Amounts use EUR base_amount when present. Refuses incomplete loads when the journal list exceeds the page cap — narrow dates. Opening-balance UI entries may be missing from the API. Journal amendments (parent_id / amendment_number, UI 'Parandus') are additive corrections; both the original and each amendment are counted.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -89,7 +102,7 @@ export function createFinancialStatementTools(client: EFinancialsClient) {
               difference: roundMoney(debit - credit),
             },
             account_count: balances.length,
-            warnings: [OPENING_BALANCE_API_WARNING],
+            warnings: statementWarnings(balances),
           });
         } catch (err) {
           if (err instanceof JournalListTruncatedError) {
@@ -106,7 +119,7 @@ export function createFinancialStatementTools(client: EFinancialsClient) {
 
     compute_balance_sheet: {
       description:
-        "Compute a balance sheet (bilanss) as of date_to from registered journal postings (cumulative). Groups Varad / Kohustused / Omakapital; folds open P&L (Tulud−Kulud) into equity for the A=L+E check. EUR base amounts. May fail if the unfiltered journal list is too large — pass date_to and prefer period tools for large books.",
+        "Compute a balance sheet (bilanss) as of date_to from registered journal postings (cumulative). Groups Varad / Kohustused / Omakapital; folds open P&L (Tulud−Kulud) into equity for the A=L+E check. EUR base amounts. May fail if the unfiltered journal list is too large — pass date_to and prefer period tools for large books. Journal amendments (parent_id / amendment_number, UI 'Parandus') are additive corrections; both the original and each amendment are counted.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -131,8 +144,10 @@ export function createFinancialStatementTools(client: EFinancialsClient) {
           const currentYearPL = roundMoney(revenue.total - expenses.total);
           const equityTotal = roundMoney(equityNominal.total + currentYearPL);
           const liabilitiesPlusEquity = roundMoney(liabilities.total + equityTotal);
-          const balanced = Math.abs(assets.total - liabilitiesPlusEquity) < 0.01;
-          const warnings = [OPENING_BALANCE_API_WARNING];
+          // An empty load must never pass the balance check.
+          const balanced =
+            balances.length > 0 && Math.abs(assets.total - liabilitiesPlusEquity) < 0.01;
+          const warnings = statementWarnings(balances);
           if (Math.abs(currentYearPL) > 0.01) {
             warnings.push(
               "Open period P&L is folded into equity for the balance check; it is normally closed to equity at year-end.",
@@ -171,7 +186,7 @@ export function createFinancialStatementTools(client: EFinancialsClient) {
 
     compute_profit_and_loss: {
       description:
-        "Compute a profit and loss statement (kasumiaruanne) for a required date_from/date_to window from registered journal postings. Tulud (revenue) and Kulud (expenses); net_profit = revenue − expenses. EUR base amounts.",
+        "Compute a profit and loss statement (kasumiaruanne) for a required date_from/date_to window from registered journal postings. Tulud (revenue) and Kulud (expenses); net_profit = revenue − expenses. EUR base amounts. Journal amendments (parent_id / amendment_number, UI 'Parandus') are additive corrections; both the original and each amendment are counted.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -215,7 +230,7 @@ export function createFinancialStatementTools(client: EFinancialsClient) {
               total: expenses.total,
             },
             net_profit: roundMoney(revenue.total - expenses.total),
-            warnings: [OPENING_BALANCE_API_WARNING],
+            warnings: statementWarnings(balances),
           });
         } catch (err) {
           if (err instanceof JournalListTruncatedError) {

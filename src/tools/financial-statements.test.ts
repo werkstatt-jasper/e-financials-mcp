@@ -155,6 +155,58 @@ describe("financial statement tools", () => {
     expect(data.current_year_pl.revenue).toBe(100);
   });
 
+  it("compute_balance_sheet never reports balanced on an empty ledger", async () => {
+    mockLedger(client, []);
+    const data = parseToolJson(await tools.compute_balance_sheet.handler({})) as {
+      check: { balanced: boolean };
+      warnings: string[];
+    };
+    expect(data.check.balanced).toBe(false);
+    expect(data.warnings.some((w) => w.includes("empty"))).toBe(true);
+  });
+
+  it("compute_trial_balance warns when the period has no postings", async () => {
+    mockLedger(client, []);
+    const data = parseToolJson(await tools.compute_trial_balance.handler({})) as {
+      account_count: number;
+      warnings: string[];
+    };
+    expect(data.account_count).toBe(0);
+    expect(data.warnings.some((w) => w.includes("empty"))).toBe(true);
+  });
+
+  it("compute_profit_and_loss warns when the period has no postings", async () => {
+    mockLedger(client, []);
+    const data = parseToolJson(
+      await tools.compute_profit_and_loss.handler({
+        date_from: "2025-06-01",
+        date_to: "2025-06-30",
+      }),
+    ) as { warnings: string[]; net_profit: number };
+    expect(data.net_profit).toBe(0);
+    expect(data.warnings.some((w) => w.includes("empty"))).toBe(true);
+  });
+
+  it("compute_trial_balance warns when postings reference accounts missing from the chart", async () => {
+    mockLedger(client, [
+      {
+        id: 1,
+        effective_date: "2025-06-01",
+        registered: true,
+        is_deleted: false,
+        postings: [{ accounts_id: 9999, type: "D", amount: 5 }],
+      },
+    ]);
+    const data = parseToolJson(await tools.compute_trial_balance.handler({})) as {
+      account_count: number;
+      accounts: Array<{ account_id: number; unknown_account?: boolean }>;
+      warnings: string[];
+    };
+    expect(data.account_count).toBe(1);
+    expect(data.accounts[0]).toMatchObject({ account_id: 9999, unknown_account: true });
+    expect(data.warnings.some((w) => w.includes("missing from the loaded chart"))).toBe(true);
+  });
+
   it("compute_balance_sheet omits open-P&L fold warning when net is zero", async () => {
     mockLedger(client, [
       {

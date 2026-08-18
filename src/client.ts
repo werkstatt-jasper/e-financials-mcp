@@ -239,6 +239,12 @@ export class EFinancialsClient {
 
     while (hasMore) {
       const response = await this.get<T>(path, { ...params, page });
+      // RIK returns a raw JSON array for unpaginated resources (e.g. /v1/accounts,
+      // /v1/account_dimensions, /v1/currencies, /v1/purchase_articles). Those have
+      // no `items`/`total_pages`; treat the array as the complete list.
+      if (Array.isArray(response)) {
+        return response as T[];
+      }
       if (response.items) {
         allItems.push(...response.items);
       }
