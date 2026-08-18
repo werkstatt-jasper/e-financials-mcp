@@ -183,7 +183,7 @@ export function createJournalTools(client: EFinancialsClient) {
   return {
     list_journals: {
       description:
-        "List journal entries with optional pagination and filters (modified_since, effective date range).",
+        "List journal entries with optional pagination and filters (modified_since, effective date range). Amendments (parent_id / amendment_number, UI 'Parandus') are additive correcting entries, not replacements — count the original and each amendment.",
       inputSchema: {
         type: "object" as const,
         properties: {

@@ -11,6 +11,8 @@ export interface AccountBalance {
   debit_total: number;
   credit_total: number;
   balance: number;
+  /** True when the posting account id is not in the loaded chart of accounts. */
+  unknown_account?: boolean;
 }
 
 export interface ComputeAllBalancesOptions {
@@ -20,6 +22,12 @@ export interface ComputeAllBalancesOptions {
 
 export const OPENING_BALANCE_API_WARNING =
   "Opening-balance entries (e-Financials UI: Algbilansi kanded) may not appear in /v1/journals. Trial balance, balance sheet, and P&L can miss opening amounts — verify opening balances in the UI.";
+
+export const UNKNOWN_ACCOUNT_BALANCE_WARNING =
+  "Some postings reference account ids that are missing from the loaded chart of accounts. They are included as 'Unknown' rows so the report is not silently zeroed.";
+
+export const EMPTY_LEDGER_WARNING =
+  "No registered journal postings matched this period. The statement is empty; do not treat it as a balanced or zeroed ledger.";
 
 function postingAmount(posting: Posting): number {
   const v = posting.base_amount ?? posting.amount;
@@ -71,9 +79,6 @@ export function computeAllBalances(
         continue;
       }
       const accountId = posting.accounts_id;
-      if (!accountById.has(accountId)) {
-        continue;
-      }
       const amt = postingAmount(posting);
       if (amt === 0) {
         continue;
@@ -89,21 +94,21 @@ export function computeAllBalances(
   const activeIds = new Set([...debit.keys(), ...credit.keys()]);
   const results: AccountBalance[] = [];
   for (const id of activeIds) {
-    // Only known chart accounts are accumulated above.
-    const account = accountById.get(id) as Account;
+    const account = accountById.get(id);
     const d = debit.get(id) ?? 0;
     const c = credit.get(id) ?? 0;
-    const balanceType = account.balance_type === "C" ? "C" : "D";
+    const balanceType = account?.balance_type === "C" ? "C" : "D";
     const signed = balanceType === "D" ? d - c : c - d;
     results.push({
       account_id: id,
-      name_est: account.name_est,
-      name_eng: account.name_eng,
+      name_est: account?.name_est ?? "Unknown",
+      name_eng: account?.name_eng ?? "Unknown",
       balance_type: balanceType,
-      account_type_est: account.account_type_est,
+      account_type_est: account?.account_type_est ?? "Unknown",
       debit_total: roundMoney(d),
       credit_total: roundMoney(c),
       balance: roundMoney(signed),
+      ...(account == null ? { unknown_account: true } : {}),
     });
   }
   results.sort((a, b) => a.account_id - b.account_id);

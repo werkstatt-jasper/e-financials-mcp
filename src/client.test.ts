@@ -437,6 +437,16 @@ describe("EFinancialsClient", () => {
       expect(urls[2]).toContain("page=3");
     });
 
+    it("returns a raw JSON array as the full list (unpaginated resources)", async () => {
+      vi.mocked(rikFetch).mockResolvedValueOnce(jsonResponse([{ id: 1000 }, { id: 1360 }]));
+
+      const items = await client.getAllPages<{ id: number }>("/v1/accounts");
+
+      expect(items).toEqual([{ id: 1000 }, { id: 1360 }]);
+      expect(vi.mocked(rikFetch)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(rikFetch).mock.calls[0][0]).toContain("page=1");
+    });
+
     it("stops after one page when total_pages is 1", async () => {
       vi.mocked(rikFetch).mockResolvedValue(jsonResponse(transactionsFixture.single_page_list));
 

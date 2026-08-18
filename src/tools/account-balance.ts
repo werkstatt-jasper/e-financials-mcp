@@ -51,7 +51,7 @@ export function createAccountBalanceTools(client: EFinancialsClient) {
   return {
     compute_account_balance: {
       description:
-        "Compute the balance of one chart account from registered journal postings (EUR base_amount when present). Requires account_id (DB id). Optional clients_id filters journals tagged with that client; optional date_from/date_to filter on journal effective_date (inclusive). Set include_entries=true for posting detail. Opening-balance UI entries may be missing from the API. Refuses incomplete loads when the journal list exceeds the page cap — narrow dates.",
+        "Compute the balance of one chart account from registered journal postings (EUR base_amount when present). Requires account_id (DB id). Optional clients_id filters journals tagged with that client; optional date_from/date_to filter on journal effective_date (inclusive). Set include_entries=true for posting detail. Opening-balance UI entries may be missing from the API. Refuses incomplete loads when the journal list exceeds the page cap — narrow dates. Journal amendments (parent_id / amendment_number, UI 'Parandus') are additive corrections; both the original and each amendment are counted.",
       inputSchema: {
         type: "object" as const,
         properties: {

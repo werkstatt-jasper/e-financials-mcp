@@ -147,7 +147,7 @@ describe("computeAllBalances", () => {
     expect(balances.find((b) => b.account_id === 1000)?.debit_total).toBe(90);
   });
 
-  it("ignores postings to unknown accounts and empty posting arrays", () => {
+  it("keeps postings to unknown accounts as 'Unknown' rows instead of dropping them", () => {
     const balances = computeAllBalances(
       [cash],
       [
@@ -157,6 +157,25 @@ describe("computeAllBalances", () => {
         }),
         journal({ effective_date: "2025-01-01", postings: [] }),
       ],
+    );
+    expect(balances).toHaveLength(1);
+    expect(balances[0]).toMatchObject({
+      account_id: 9999,
+      name_est: "Unknown",
+      name_eng: "Unknown",
+      account_type_est: "Unknown",
+      balance_type: "D",
+      debit_total: 1,
+      credit_total: 0,
+      balance: 1,
+      unknown_account: true,
+    });
+  });
+
+  it("returns an empty result when there are no postings at all", () => {
+    const balances = computeAllBalances(
+      [cash],
+      [journal({ effective_date: "2025-01-01", postings: [] })],
     );
     expect(balances).toEqual([]);
   });
