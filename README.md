@@ -152,7 +152,7 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 | Tool | Description |
 |------|-------------|
 | `list_sales_invoices` | Sales invoices with filters. |
-| `list_purchase_invoices` | Purchase invoices with filters. The e-arveldaja incoming e-invoice inbox is not in the public RIK API; accept e-invoices in the web UI and they appear here as `PROJECT` drafts. |
+| `list_purchase_invoices` | Purchase invoices with filters. The e-arveldaja incoming e-invoice inbox is not in the public RIK API; accept e-invoices in the web UI and they appear here as `PROJECT` drafts with lines on suspense account 9900 ("digiarve kulu vahekonto") — recode them with `update_purchase_invoice`, then confirm with `register_purchase_invoice`. |
 | `list_unpaid_invoices` | Unpaid sales/purchase invoices. |
 | `get_sales_invoice` | One sales invoice. |
 | `get_purchase_invoice` | One purchase invoice. |

@@ -317,9 +317,12 @@ export function createInvoiceTools(client: EFinancialsClient) {
         "List purchase invoices (invoices from suppliers you need to pay) with optional filters. " +
         "Note: the e-arveldaja incoming e-invoice inbox ('Sissetulnud digiarved') is not exposed by " +
         "the public RIK REST API — arrived-but-unaccepted e-invoices cannot be listed, accepted, or " +
-        "rejected over the API (verified 2026-08; no such endpoints exist). Accept them in the " +
-        "e-Financials web UI; they then appear here as PROJECT purchase invoices. Do not search for " +
-        "list/accept/reject incoming-einvoice tools.",
+        "rejected over the API (verified 2026-08; no such endpoints exist). Do not search for " +
+        "list/accept/reject incoming-einvoice tools. Post-accept triage: once the user accepts an " +
+        "e-invoice in the e-Financials web UI it appears here as a PROJECT draft whose lines default " +
+        "to suspense account 9900 ('digiarve kulu vahekonto'). List with status=PROJECT, inspect " +
+        "with get_purchase_invoice, recode 9900 lines to the correct expense account and VAT via " +
+        "update_purchase_invoice, then confirm with register_purchase_invoice.",
       inputSchema: {
         type: "object" as const,
         properties: {
