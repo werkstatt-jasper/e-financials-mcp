@@ -29,6 +29,7 @@ export interface CreateClientParams {
   country_code?: string;
   is_buyer?: boolean;
   is_supplier?: boolean;
+  is_physical_entity?: boolean;
   bank_account?: string;
   bank_name?: string;
   payment_term_days?: number;

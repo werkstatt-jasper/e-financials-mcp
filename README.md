@@ -141,8 +141,8 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 | `list_suppliers` | Clients with `is_supplier: true`. |
 | `get_client` | One client by ID. |
 | `search_clients` | Search over all pages (name, reg code, email). |
-| `create_client` | Create a new client. |
-| `update_client` | Partial update. |
+| `create_client` | Create a new client. Estonian private clients need `is_physical_entity: true` (empty `reg_code` alone is not enough). |
+| `update_client` | Partial update, including `is_physical_entity`. |
 | `delete_client` | Permanent removal. |
 | `deactivate_client` | Soft-disable. |
 | `reactivate_client` | Re-enable. |
