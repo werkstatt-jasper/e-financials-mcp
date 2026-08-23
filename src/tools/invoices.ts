@@ -314,7 +314,12 @@ export function createInvoiceTools(client: EFinancialsClient) {
 
     list_purchase_invoices: {
       description:
-        "List purchase invoices (invoices from suppliers you need to pay) with optional filters.",
+        "List purchase invoices (invoices from suppliers you need to pay) with optional filters. " +
+        "Note: the e-arveldaja incoming e-invoice inbox ('Sissetulnud digiarved') is not exposed by " +
+        "the public RIK REST API — arrived-but-unaccepted e-invoices cannot be listed, accepted, or " +
+        "rejected over the API (verified 2026-08; no such endpoints exist). Accept them in the " +
+        "e-Financials web UI; they then appear here as PROJECT purchase invoices. Do not search for " +
+        "list/accept/reject incoming-einvoice tools.",
       inputSchema: {
         type: "object" as const,
         properties: {
