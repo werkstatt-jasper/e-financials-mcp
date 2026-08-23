@@ -96,6 +96,8 @@ describe("client tools", () => {
         name: "New Co",
         cl_code_country: "EST",
         is_supplier: true,
+        is_juridical_entity: true,
+        is_physical_entity: false,
       }),
     );
     const data = parseToolJson(result) as { success: boolean; id: number };
@@ -135,6 +137,45 @@ describe("client tools", () => {
       "/v1/clients",
       expect.objectContaining({
         address_text: "St 1, Tallinn, 10111",
+      }),
+    );
+  });
+
+  it("create_client posts physical-entity flags and omits empty code", async () => {
+    vi.mocked(client.post).mockResolvedValue({ ...clientsFixture.created_client } as never);
+    await tools.create_client.handler({
+      name: "Hans Saarvelt",
+      country_code: "EE",
+      is_buyer: true,
+      is_physical_entity: true,
+      reg_code: "  ",
+    });
+    const body = vi.mocked(client.post).mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(body).toEqual(
+      expect.objectContaining({
+        name: "Hans Saarvelt",
+        cl_code_country: "EST",
+        is_client: true,
+        is_physical_entity: true,
+        is_juridical_entity: false,
+      }),
+    );
+    expect(body).not.toHaveProperty("code");
+  });
+
+  it("create_client keeps a non-empty reg_code on physical persons", async () => {
+    vi.mocked(client.post).mockResolvedValue({ ...clientsFixture.created_client } as never);
+    await tools.create_client.handler({
+      name: "Person",
+      is_physical_entity: true,
+      reg_code: "39001010000",
+    });
+    expect(client.post).toHaveBeenCalledWith(
+      "/v1/clients",
+      expect.objectContaining({
+        is_physical_entity: true,
+        is_juridical_entity: false,
+        code: "39001010000",
       }),
     );
   });
@@ -235,6 +276,21 @@ describe("client tools", () => {
       invoice_vat_no: "EE123",
       telephone: "+3721",
       cl_code_country: "EST",
+    });
+  });
+
+  it("update_client maps is_physical_entity to complementary flags", async () => {
+    vi.mocked(client.patch).mockResolvedValue({} as never);
+    await tools.update_client.handler({ id: 4, is_physical_entity: true });
+    expect(client.patch).toHaveBeenCalledWith("/v1/clients/4", {
+      is_physical_entity: true,
+      is_juridical_entity: false,
+    });
+
+    await tools.update_client.handler({ id: 4, is_physical_entity: false });
+    expect(client.patch).toHaveBeenCalledWith("/v1/clients/4", {
+      is_physical_entity: false,
+      is_juridical_entity: true,
     });
   });
 

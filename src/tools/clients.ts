@@ -108,6 +108,11 @@ const clientWritableInputProperties = {
     type: "boolean" as const,
     description: "Is this a supplier/vendor?",
   },
+  is_physical_entity: {
+    type: "boolean" as const,
+    description:
+      "True for a natural person (füüsiline isik). Required for Estonian private clients without a business registry code; empty reg_code alone is not enough. False/omitted keeps the juridical (company) default.",
+  },
   bank_account: {
     type: "string" as const,
     description: "Bank account number (IBAN)",
@@ -155,6 +160,7 @@ const createClientSchema = z.object({
   country_code: optionalString,
   is_buyer: optionalBoolean,
   is_supplier: optionalBoolean,
+  is_physical_entity: optionalBoolean,
   bank_account: optionalString,
   bank_name: optionalString,
   payment_term_days: optionalPositiveInt,
@@ -173,10 +179,26 @@ const updateClientSchema = z.object({
   country_code: optionalString,
   is_buyer: optionalBoolean,
   is_supplier: optionalBoolean,
+  is_physical_entity: optionalBoolean,
   bank_account: optionalString,
   bank_name: optionalString,
   payment_term_days: optionalPositiveInt,
 });
+
+function entityTypeFlags(isPhysical: boolean): {
+  is_physical_entity: boolean;
+  is_juridical_entity: boolean;
+} {
+  return {
+    is_physical_entity: isPhysical,
+    is_juridical_entity: !isPhysical,
+  };
+}
+
+function nonEmptyRegCode(regCode: string | undefined): string | undefined {
+  const trimmed = regCode?.trim();
+  return trimmed ? trimmed : undefined;
+}
 
 /** Maps user-facing partial params to RIK `Clients` JSON for PATCH (only defined keys). */
 function buildPartialClientPatchBody(params: UpdateClientParams): Record<string, unknown> {
@@ -216,6 +238,9 @@ function buildPartialClientPatchBody(params: UpdateClientParams): Record<string,
   }
   if (params.is_supplier !== undefined) {
     body.is_supplier = params.is_supplier;
+  }
+  if (params.is_physical_entity !== undefined) {
+    Object.assign(body, entityTypeFlags(params.is_physical_entity));
   }
   if (params.bank_account !== undefined) {
     body.bank_account_no = params.bank_account;
@@ -378,7 +403,9 @@ export function createClientTools(client: EFinancialsClient) {
     },
 
     create_client: {
-      description: "Create a new client (buyer or supplier). The client will be created as active.",
+      description:
+        "Create a new client (buyer or supplier). The client will be created as active. " +
+        "Estonian private clients (füüsiline isik) must set is_physical_entity true; empty reg_code alone is not enough.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -400,10 +427,12 @@ export function createClientTools(client: EFinancialsClient) {
         ].filter(Boolean);
         const address_text = addressParts.length > 0 ? addressParts.join(", ") : undefined;
 
+        const isPhysical = paramsParsed.is_physical_entity === true;
+        const code = isPhysical ? nonEmptyRegCode(paramsParsed.reg_code) : paramsParsed.reg_code;
         // Map user-friendly params to API field names
         const apiParams: CreateClientAPIParams = {
           name: paramsParsed.name,
-          code: paramsParsed.reg_code,
+          ...(code !== undefined ? { code } : {}),
           invoice_vat_no: paramsParsed.vat_no,
           email: paramsParsed.email,
           telephone: paramsParsed.phone,
@@ -413,8 +442,7 @@ export function createClientTools(client: EFinancialsClient) {
           is_supplier: paramsParsed.is_supplier ?? false,
           bank_account_no: paramsParsed.bank_account,
           invoice_days: paramsParsed.payment_term_days,
-          is_juridical_entity: true,
-          is_physical_entity: false,
+          ...entityTypeFlags(isPhysical),
           is_member: false,
           send_invoice_to_email: false,
           send_invoice_to_accounting_email: false,
