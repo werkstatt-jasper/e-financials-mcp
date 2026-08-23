@@ -9,11 +9,21 @@ import {
   type InvoiceNumberFields,
   nextSalesInvoiceSuffix,
 } from "../invoices/sales-invoice-number.js";
+import {
+  buildProductUnitById,
+  defaultProductIdFromList,
+  extractProductsList,
+  mapSalesInvoiceItems,
+  mergeProductUnit,
+  missingProductIdsForUnit,
+  rowsNeedProductLookup,
+} from "../invoices/sales-invoice-rows.js";
 import { validateInvoiceData } from "../invoices/validate-invoice-data.js";
 import { resolveFileInput } from "../resolve-file-input.js";
 import type {
   CreatePurchaseInvoiceParams,
   CreateSalesInvoiceParams,
+  InvoiceRow,
   PurchaseInvoice,
   SalesInvoice,
 } from "../types/invoice.js";
@@ -94,6 +104,7 @@ const invoiceRowSchema = z.object({
   products_id: optionalPositiveInt,
   vat_rate_id: optionalPositiveInt,
   accounts_id: optionalPositiveInt,
+  unit: optionalString,
 });
 
 const createSalesInvoiceSchema = z.object({
@@ -163,7 +174,7 @@ const updateSalesInvoiceSchema = z.object({
   clients_id: optionalPositiveInt,
   invoice_date: optionalYmd,
   due_date: optionalYmd,
-  rows: z.array(z.unknown()).optional(),
+  rows: z.array(invoiceRowSchema).optional(),
   description: optionalString,
   cl_currencies_id: optionalString,
   trade_secret: optionalBoolean,
@@ -217,6 +228,24 @@ const uploadPurchaseInvoiceFileSchema = z.object({
   file_path: z.string().min(1),
   filename: optionalString,
 });
+
+async function salesInvoiceItemContext(
+  client: EFinancialsClient,
+  rows: InvoiceRow[],
+  productsResponse: unknown,
+): Promise<{ defaultProductId: number; unitById: Map<number, string> }> {
+  const productsList = extractProductsList(productsResponse);
+  const unitById = buildProductUnitById(productsList);
+  await Promise.all(
+    missingProductIdsForUnit(rows, unitById).map(async (id) => {
+      mergeProductUnit(unitById, await client.get(`/v1/products/${id}`), id);
+    }),
+  );
+  return {
+    defaultProductId: defaultProductIdFromList(productsList),
+    unitById,
+  };
+}
 
 export function createInvoiceTools(client: EFinancialsClient) {
   return {
@@ -482,6 +511,11 @@ export function createInvoiceTools(client: EFinancialsClient) {
                 },
                 vat_rate_id: { type: "number" },
                 accounts_id: { type: "number" },
+                unit: {
+                  type: "string",
+                  description:
+                    "Unit of measure (e.g. tk, m2, m3). Omit to copy the product unit when products_id is set.",
+                },
               },
               required: ["description", "quantity", "unit_price"],
             },
@@ -536,7 +570,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
       handler: async (params: unknown) => {
         const args = parseToolArgs(createSalesInvoiceSchema, params) as CreateSalesInvoiceParams;
 
-        const needsProductLookup = args.rows.some((r) => !r.products_id);
+        const needsProductLookup = rowsNeedProductLookup(args.rows);
 
         const [seriesResponse, templatesResponse, productsResponse, listedInvoices] =
           await Promise.all([
@@ -553,8 +587,11 @@ export function createInvoiceTools(client: EFinancialsClient) {
         const templatesList = (templatesResponse.items ?? []) as Array<Record<string, unknown>>;
         const defaultTemplate = templatesList[0] ?? {};
 
-        const productsList = (productsResponse.items ?? []) as Array<Record<string, unknown>>;
-        const defaultProductId = (productsList[0]?.id as number) ?? 1;
+        const itemContext = await salesInvoiceItemContext(
+          client,
+          args.rows,
+          needsProductLookup ? productsResponse : { items: [] },
+        );
 
         const invoiceDate = new Date(args.invoice_date);
         const dueDate = new Date(args.due_date);
@@ -582,15 +619,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
           notes: args.description,
           ...(args.trade_secret !== undefined ? { trade_secret: args.trade_secret } : {}),
           ...(args.invoice_info !== undefined ? { invoice_info: args.invoice_info } : {}),
-          items: args.rows.map((row) => ({
-            custom_title: row.description,
-            products_id: row.products_id ?? defaultProductId,
-            amount: row.quantity,
-            unit_net_price: row.unit_price,
-            total_net_price: row.quantity * row.unit_price,
-            vat_accounts_id: row.vat_rate_id,
-            sale_accounts_dimensions_id: row.accounts_id,
-          })),
+          items: mapSalesInvoiceItems(args.rows, itemContext),
         };
 
         const response = await client.post<SalesInvoice>("/v1/sale_invoices", apiPayload);
@@ -815,13 +844,28 @@ export function createInvoiceTools(client: EFinancialsClient) {
           due_date: { type: "string" },
           rows: {
             type: "array",
+            description:
+              "Replace line items. Friendly keys (description, quantity, unit_price) are remapped to API items. Omit to keep current items.",
             items: {
               type: "object",
               properties: {
                 description: { type: "string" },
                 quantity: { type: "number" },
                 unit_price: { type: "number" },
+                products_id: {
+                  type: "number",
+                  description:
+                    "Product/service ID (auto-detected from first available product if omitted)",
+                },
+                vat_rate_id: { type: "number" },
+                accounts_id: { type: "number" },
+                unit: {
+                  type: "string",
+                  description:
+                    "Unit of measure (e.g. tk, m2, m3). Omit to copy the product unit when products_id is set.",
+                },
               },
+              required: ["description", "quantity", "unit_price"],
             },
           },
           description: { type: "string" },
@@ -858,6 +902,20 @@ export function createInvoiceTools(client: EFinancialsClient) {
         const currentResponse = await client.get(`/v1/sale_invoices/${id}`);
         const current = currentResponse as unknown as Record<string, unknown>;
 
+        let items = current.items;
+        if (updateParams.rows) {
+          const needsProductLookup = rowsNeedProductLookup(updateParams.rows);
+          const productsResponse = needsProductLookup
+            ? await client.get("/v1/products")
+            : { items: [] };
+          const itemContext = await salesInvoiceItemContext(
+            client,
+            updateParams.rows,
+            productsResponse,
+          );
+          items = mapSalesInvoiceItems(updateParams.rows, itemContext);
+        }
+
         // Build payload with existing values as defaults, override with provided updates
         const apiPayload = {
           sale_invoice_type: current.sale_invoice_type,
@@ -873,7 +931,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
           notes: updateParams.description ?? current.notes,
           trade_secret: updateParams.trade_secret ?? current.trade_secret,
           invoice_info: updateParams.invoice_info ?? current.invoice_info,
-          items: updateParams.rows ?? current.items,
+          items,
         };
 
         const response = await client.patch<SalesInvoice>(`/v1/sale_invoices/${id}`, apiPayload);

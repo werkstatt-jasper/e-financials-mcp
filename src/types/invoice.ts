@@ -5,6 +5,8 @@ export interface InvoiceRow {
   products_id?: number;
   vat_rate_id?: number;
   accounts_id?: number;
+  /** Unit of measure (OpenAPI SaleInvoicesItems.unit, max 50). */
+  unit?: string;
 }
 
 /**

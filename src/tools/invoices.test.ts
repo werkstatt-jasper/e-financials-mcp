@@ -332,7 +332,7 @@ describe("invoice tools", () => {
     expect(body.journal_date).toBe("2025-06-01");
   });
 
-  it("create_sales_invoice skips product lookup when all rows have products_id", async () => {
+  it("create_sales_invoice skips product lookup when all rows have products_id and unit", async () => {
     vi.mocked(client.get)
       .mockResolvedValueOnce({
         items: [{ id: 1, is_default: true, number_start_value: 1 }],
@@ -344,19 +344,92 @@ describe("invoice tools", () => {
       clients_id: 1,
       invoice_date: "2025-06-01",
       due_date: "2025-06-01",
-      rows: [{ description: "Item", quantity: 1, unit_price: 10, products_id: 77 }],
+      rows: [{ description: "Item", quantity: 1, unit_price: 10, products_id: 77, unit: "tk" }],
     });
 
     expect(client.get).not.toHaveBeenCalledWith("/v1/products");
     expect(client.post).toHaveBeenCalledWith(
       "/v1/sale_invoices",
       expect.objectContaining({
-        items: [expect.objectContaining({ products_id: 77 })],
+        items: [expect.objectContaining({ products_id: 77, unit: "tk" })],
       }),
     );
   });
 
-  it("update_sales_invoice applies invoice_date rows and currency overrides", async () => {
+  it("create_sales_invoice copies product unit when products_id is set and unit is omitted", async () => {
+    vi.mocked(client.get)
+      .mockResolvedValueOnce({
+        items: [{ id: 1, is_default: true, number_start_value: 1 }],
+      } as never)
+      .mockResolvedValueOnce({ items: [{ id: 1 }] } as never)
+      .mockResolvedValueOnce({ items: [{ id: 77, unit: "m3" }] } as never);
+    vi.mocked(client.post).mockResolvedValue({ ...invoicesFixture.created_sales_invoice } as never);
+
+    await tools.create_sales_invoice.handler({
+      clients_id: 1,
+      invoice_date: "2025-06-01",
+      due_date: "2025-06-01",
+      rows: [{ description: "Vesi", quantity: 1, unit_price: 10, products_id: 77 }],
+    });
+
+    expect(client.get).toHaveBeenCalledWith("/v1/products");
+    expect(client.post).toHaveBeenCalledWith(
+      "/v1/sale_invoices",
+      expect.objectContaining({
+        items: [expect.objectContaining({ products_id: 77, unit: "m3" })],
+      }),
+    );
+  });
+
+  it("create_sales_invoice fetches a missing product by id for unit fallback", async () => {
+    vi.mocked(client.get)
+      .mockResolvedValueOnce({
+        items: [{ id: 1, is_default: true, number_start_value: 1 }],
+      } as never)
+      .mockResolvedValueOnce({ items: [{ id: 1 }] } as never)
+      .mockResolvedValueOnce({ items: [{ id: 1, unit: "tk" }] } as never)
+      .mockResolvedValueOnce({ id: 77, unit: "m3" } as never);
+    vi.mocked(client.post).mockResolvedValue({ ...invoicesFixture.created_sales_invoice } as never);
+
+    await tools.create_sales_invoice.handler({
+      clients_id: 1,
+      invoice_date: "2025-06-01",
+      due_date: "2025-06-01",
+      rows: [{ description: "Vesi", quantity: 1, unit_price: 10, products_id: 77 }],
+    });
+
+    expect(client.get).toHaveBeenCalledWith("/v1/products/77");
+    expect(client.post).toHaveBeenCalledWith(
+      "/v1/sale_invoices",
+      expect.objectContaining({
+        items: [expect.objectContaining({ products_id: 77, unit: "m3" })],
+      }),
+    );
+  });
+
+  it("create_sales_invoice posts an explicit row unit", async () => {
+    vi.mocked(client.get)
+      .mockResolvedValueOnce({ items: [] } as never)
+      .mockResolvedValueOnce({ items: [] } as never)
+      .mockResolvedValueOnce({ items: [{ id: 42, unit: "tk" }] } as never);
+    vi.mocked(client.post).mockResolvedValue({ ...invoicesFixture.created_sales_invoice } as never);
+
+    await tools.create_sales_invoice.handler({
+      clients_id: 1,
+      invoice_date: "2025-06-01",
+      due_date: "2025-06-01",
+      rows: [{ description: "Item", quantity: 1, unit_price: 10, unit: "m3" }],
+    });
+
+    expect(client.post).toHaveBeenCalledWith(
+      "/v1/sale_invoices",
+      expect.objectContaining({
+        items: [expect.objectContaining({ unit: "m3" })],
+      }),
+    );
+  });
+
+  it("update_sales_invoice remaps friendly rows to API items", async () => {
     vi.mocked(client.get).mockResolvedValueOnce({
       ...invoicesFixture.sale_invoice_get_for_patch,
     } as never);
@@ -375,8 +448,86 @@ describe("invoice tools", () => {
       expect.objectContaining({
         create_date: "2025-12-01",
         journal_date: "2025-01-01",
-        items: newRows,
+        items: [
+          expect.objectContaining({
+            custom_title: "R1",
+            amount: 2,
+            unit_net_price: 5,
+            total_net_price: 10,
+            products_id: 1,
+          }),
+        ],
         cl_currencies_id: "GBP",
+      }),
+    );
+    const body = vi.mocked(client.patch).mock.calls[0]?.[1] as {
+      items: Array<Record<string, unknown>>;
+    };
+    expect(body.items[0]).not.toHaveProperty("description");
+    expect(body.items[0]).not.toHaveProperty("quantity");
+    expect(body.items[0]).not.toHaveProperty("unit_price");
+  });
+
+  it("update_sales_invoice skips product lookup when remapped rows already have unit", async () => {
+    vi.mocked(client.get).mockResolvedValueOnce({
+      ...invoicesFixture.sale_invoice_get_for_patch,
+    } as never);
+    vi.mocked(client.patch).mockResolvedValue({ id: 88 } as never);
+
+    await tools.update_sales_invoice.handler({
+      id: 88,
+      rows: [{ description: "R1", quantity: 1, unit_price: 4, products_id: 77, unit: "m3" }],
+    });
+
+    expect(client.get).not.toHaveBeenCalledWith("/v1/products");
+    expect(client.patch).toHaveBeenCalledWith(
+      "/v1/sale_invoices/88",
+      expect.objectContaining({
+        items: [expect.objectContaining({ custom_title: "R1", products_id: 77, unit: "m3" })],
+      }),
+    );
+  });
+
+  it("update_sales_invoice posts an explicit row unit and copies a product unit", async () => {
+    vi.mocked(client.get)
+      .mockResolvedValueOnce({
+        ...invoicesFixture.sale_invoice_get_for_patch,
+      } as never)
+      .mockResolvedValueOnce({ items: [{ id: 77, unit: "krt." }] } as never);
+    vi.mocked(client.patch).mockResolvedValue({ id: 88 } as never);
+
+    await tools.update_sales_invoice.handler({
+      id: 88,
+      rows: [
+        { description: "A", quantity: 1, unit_price: 2, products_id: 77 },
+        { description: "B", quantity: 1, unit_price: 3, products_id: 77, unit: "m3" },
+      ],
+    });
+
+    const body = vi.mocked(client.patch).mock.calls[0]?.[1] as {
+      items: Array<Record<string, unknown>>;
+    };
+    expect(body.items[0]).toMatchObject({ custom_title: "A", unit: "krt." });
+    expect(body.items[1]).toMatchObject({ custom_title: "B", unit: "m3" });
+  });
+
+  it("update_sales_invoice keeps current items when rows are omitted", async () => {
+    vi.mocked(client.get).mockResolvedValueOnce({
+      ...invoicesFixture.sale_invoice_get_for_patch,
+    } as never);
+    vi.mocked(client.patch).mockResolvedValue({ id: 88 } as never);
+
+    await tools.update_sales_invoice.handler({
+      id: 88,
+      description: "New notes",
+    });
+
+    expect(client.get).not.toHaveBeenCalledWith("/v1/products");
+    expect(client.patch).toHaveBeenCalledWith(
+      "/v1/sale_invoices/88",
+      expect.objectContaining({
+        items: invoicesFixture.sale_invoice_get_for_patch.items,
+        notes: "New notes",
       }),
     );
   });
