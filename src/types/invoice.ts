@@ -78,6 +78,8 @@ export interface CreateSalesInvoiceParams {
   show_client_balance?: boolean;
   number_suffix?: string;
   trade_secret?: boolean;
+  invoice_info?: string;
+  journal_date?: string;
 }
 
 export interface CreatePurchaseInvoiceParams {

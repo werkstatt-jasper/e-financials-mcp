@@ -156,10 +156,10 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 | `list_unpaid_invoices` | Unpaid sales/purchase invoices. |
 | `get_sales_invoice` | One sales invoice. |
 | `get_purchase_invoice` | One purchase invoice. |
-| `create_sales_invoice` | Draft sales invoice. Optional `trade_secret` (kutse-/ametisaladus). |
+| `create_sales_invoice` | Draft sales invoice. Optional `trade_secret`, printed `invoice_info` (not `notes` / not `get_invoice_info`), and `journal_date` (defaults to `invoice_date`). |
 | `validate_invoice_data` | Read-only pre-booking checks (totals, dates, VAT rates, FX). Free-tier on hosted SaaS. |
 | `create_purchase_invoice` | Draft purchase invoice with VAT defaults + create-then-repair totals. Single-line params or `items[]`; non-EUR needs `currency_rate`. Supports `reversed_vat_id` (7 = non-EU, 4 = EU). |
-| `update_sales_invoice` | PATCH sales draft. Optional `trade_secret`; omitted keeps the stored value. |
+| `update_sales_invoice` | PATCH sales draft. Optional `trade_secret`, `invoice_info`, and `journal_date`; omitted keeps stored values. `invoice_date` does not overwrite `journal_date`. |
 | `delete_sales_invoice` | DELETE sales invoice. |
 | `register_sales_invoice` | Confirm sales invoice. |
 | `invalidate_sales_invoice` | Reverse sales confirmation. |

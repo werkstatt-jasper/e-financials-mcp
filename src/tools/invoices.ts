@@ -104,6 +104,8 @@ const createSalesInvoiceSchema = z.object({
   show_client_balance: optionalBoolean,
   number_suffix: optionalString,
   trade_secret: optionalBoolean,
+  invoice_info: optionalString,
+  journal_date: optionalYmd,
 });
 
 const purchaseInvoiceItemSchema = z.object({
@@ -160,6 +162,8 @@ const updateSalesInvoiceSchema = z.object({
   description: optionalString,
   cl_currencies_id: optionalString,
   trade_secret: optionalBoolean,
+  invoice_info: optionalString,
+  journal_date: optionalYmd,
 });
 
 const updatePurchaseInvoiceItemSchema = purchaseInvoiceItemSchema.extend({
@@ -510,6 +514,16 @@ export function createInvoiceTools(client: EFinancialsClient) {
             description:
               "True if the invoice contains a professional or official secret (Estonian UI: Müügiarve sisaldab kutse- või ametisaladust). Only PROJECT drafts. Omit to keep the API default (false).",
           },
+          invoice_info: {
+            type: "string",
+            description:
+              "Printed invoice comment / information text (OpenAPI invoice_info, max 4000). Not description/notes, and not company settings get_invoice_info. Only PROJECT drafts. Omit to leave empty.",
+          },
+          journal_date: {
+            type: "string",
+            description:
+              "Turnover / journal date (YYYY-MM-DD). Only PROJECT drafts. Omit to copy invoice_date.",
+          },
         },
         required: ["clients_id", "invoice_date", "due_date", "rows"],
       },
@@ -550,12 +564,13 @@ export function createInvoiceTools(client: EFinancialsClient) {
           cl_countries_id: args.cl_countries_id ?? "EST",
           number_suffix: numberSuffix,
           create_date: args.invoice_date,
-          journal_date: args.invoice_date,
+          journal_date: args.journal_date ?? args.invoice_date,
           term_days: termDays,
           cl_currencies_id: args.cl_currencies_id ?? "EUR",
           show_client_balance: args.show_client_balance ?? false,
           notes: args.description,
           ...(args.trade_secret !== undefined ? { trade_secret: args.trade_secret } : {}),
+          ...(args.invoice_info !== undefined ? { invoice_info: args.invoice_info } : {}),
           items: args.rows.map((row) => ({
             custom_title: row.description,
             products_id: row.products_id ?? defaultProductId,
@@ -804,6 +819,16 @@ export function createInvoiceTools(client: EFinancialsClient) {
             description:
               "True if the invoice contains a professional or official secret (Estonian UI: Müügiarve sisaldab kutse- või ametisaladust). Only PROJECT drafts. Omit to keep the current value.",
           },
+          invoice_info: {
+            type: "string",
+            description:
+              "Printed invoice comment / information text (OpenAPI invoice_info, max 4000). Not description/notes, and not company settings get_invoice_info. Only PROJECT drafts. Omit to keep the current value.",
+          },
+          journal_date: {
+            type: "string",
+            description:
+              "Turnover / journal date (YYYY-MM-DD). Only PROJECT drafts. Omit to keep the current value (invoice_date does not overwrite it).",
+          },
         },
         required: ["id"],
       },
@@ -825,12 +850,13 @@ export function createInvoiceTools(client: EFinancialsClient) {
           cl_countries_id: current.cl_countries_id,
           number_suffix: current.number_suffix,
           create_date: updateParams.invoice_date ?? current.create_date,
-          journal_date: updateParams.invoice_date ?? current.journal_date,
+          journal_date: updateParams.journal_date ?? current.journal_date,
           term_days: current.term_days,
           cl_currencies_id: updateParams.cl_currencies_id ?? current.cl_currencies_id,
           show_client_balance: current.show_client_balance,
           notes: updateParams.description ?? current.notes,
           trade_secret: updateParams.trade_secret ?? current.trade_secret,
+          invoice_info: updateParams.invoice_info ?? current.invoice_info,
           items: updateParams.rows ?? current.items,
         };
 
