@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { EFinancialsClient } from "../client.js";
+import { extractSeriesList } from "../invoices/sales-invoice-number.js";
 import type { CompanyInvoiceInfo, InvoiceSeries } from "../types/invoiceSettings.js";
 import {
   optionalNumber,
@@ -8,19 +9,6 @@ import {
   parseToolArgs,
   positiveInt,
 } from "../validation/tool-args.js";
-
-function extractSeriesList(response: unknown): InvoiceSeries[] {
-  if (Array.isArray(response)) {
-    return response as InvoiceSeries[];
-  }
-  if (response && typeof response === "object") {
-    const obj = response as Record<string, unknown>;
-    if (Array.isArray(obj.items)) {
-      return obj.items as InvoiceSeries[];
-    }
-  }
-  return [];
-}
 
 const companyInvoiceInfoSchemaProps = {
   address: {
