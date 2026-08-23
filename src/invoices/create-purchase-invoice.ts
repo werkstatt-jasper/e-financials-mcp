@@ -46,6 +46,7 @@ export interface CreatePurchaseInvoiceInput {
   vat_rate?: number;
   vat_accounts_id?: number;
   reversed_vat_id?: number;
+  cl_vat_articles_id?: number;
   items?: PurchaseInvoiceLineInput[];
   /** When true, caller-supplied total_amount/vat_amount win over derived totals. */
   explicit_totals?: boolean;
@@ -131,6 +132,7 @@ function buildLinesFromFriendlyParams(
       vat_rate_dropdown: input.vat_rate != null ? formatVatRateDropdown(input.vat_rate) : undefined,
       vat_accounts_id: input.vat_accounts_id,
       reversed_vat_id: input.reversed_vat_id,
+      cl_vat_articles_id: input.cl_vat_articles_id,
     },
   ];
 }
@@ -168,7 +170,7 @@ export async function createPurchaseInvoiceWithRepair(
         line.vat_rate_dropdown ??
         (line.vat_rate != null ? formatVatRateDropdown(line.vat_rate) : undefined),
       vat_accounts_id: line.vat_accounts_id,
-      cl_vat_articles_id: line.cl_vat_articles_id,
+      cl_vat_articles_id: line.cl_vat_articles_id ?? input.cl_vat_articles_id,
       purchase_accounts_id: line.purchase_accounts_id,
     };
     const defaults = applyPurchaseVatDefaults(articles, vatFields, isVatRegistered);

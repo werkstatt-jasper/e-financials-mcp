@@ -159,6 +159,7 @@ const createPurchaseInvoiceSchema = z.object({
   vat_rate: optionalNumber,
   vat_accounts_id: optionalPositiveInt,
   reversed_vat_id: optionalPositiveInt,
+  cl_vat_articles_id: optionalPositiveInt,
   items: z.array(purchaseInvoiceItemSchema).optional(),
   base_net_price: optionalNumber,
   base_vat_price: optionalNumber,
@@ -695,7 +696,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
 
     create_purchase_invoice: {
       description:
-        "Create a purchase invoice draft (PROJECT), apply VAT defaults, then repair invoice-level vat_price/gross_price from line items (create-then-repair). Accepts single-line friendly params or an items[] array. Non-EUR requires currency_rate. No-VAT lines use vat_rate_dropdown '-'.",
+        "Create a purchase invoice draft (PROJECT), apply VAT defaults, then repair invoice-level vat_price/gross_price from line items (create-then-repair). Accepts single-line friendly params or an items[] array. Optional cl_vat_articles_id (1 = standard input VAT, 16 = sõiduauto 100%) wins over the silent fallback 1. Omit still uses the purchase-article default, or 1 when VAT-registered and the article has none. Non-EUR requires currency_rate. No-VAT lines use vat_rate_dropdown '-'.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -764,10 +765,40 @@ export function createInvoiceTools(client: EFinancialsClient) {
             description:
               "KMD (VAT declaration) classification for reverse-charge purchases. Use 7 for non-EU suppliers (KMD line 7: '0% Other purchases of goods 24% (KMD 7)'), 4 for intra-community EU acquisitions (KMD line 4). Omit for regular Estonian purchases.",
           },
+          cl_vat_articles_id: {
+            type: "number",
+            description:
+              "VAT article applied to every line that omits items[].cl_vat_articles_id. 1 = standard input VAT; 16 = sõiduauto 100%. Confirm other treatments (e.g. 50%) from a UI-created invoice via get_purchase_invoice. Omit to use the purchase-article default, or fallback 1 when VAT-registered.",
+          },
           items: {
             type: "array",
-            description: "Optional multi-line items (overrides single-line friendly params)",
-            items: { type: "object" },
+            description:
+              "Optional multi-line items (overrides single-line friendly params). Include cl_vat_articles_id on a line to choose sõiduauto vs standard input VAT.",
+            items: {
+              type: "object",
+              properties: {
+                custom_title: { type: "string" },
+                amount: { type: "number" },
+                unit_net_price: { type: "number" },
+                total_net_price: { type: "number" },
+                cl_purchase_articles_id: { type: "number" },
+                purchase_accounts_dimensions_id: { type: "number" },
+                purchase_accounts_id: { type: "number" },
+                vat_rate: { type: "number" },
+                vat_rate_dropdown: { type: "string" },
+                vat_accounts_id: { type: "number" },
+                cl_vat_articles_id: {
+                  type: "number",
+                  description:
+                    "VAT article. 1 = standard input VAT; 16 = sõiduauto 100%. Confirm other treatments (e.g. 50%) from a UI-created invoice via get_purchase_invoice. Omit to use the top-level cl_vat_articles_id, the purchase-article default, or fallback 1 when VAT-registered.",
+                },
+                reversed_vat_id: { type: "number" },
+                project_no_vat_gross_price: { type: "number" },
+                base_net_price: { type: "number" },
+                base_vat_price: { type: "number" },
+                base_gross_price: { type: "number" },
+              },
+            },
           },
           paid_in_cash: {
             type: "boolean",
@@ -800,6 +831,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
           ...(paramsParsed as CreatePurchaseInvoiceParams),
           total_amount: paramsParsed.total_amount,
           items: paramsParsed.items,
+          cl_vat_articles_id: paramsParsed.cl_vat_articles_id,
           currency_rate: paramsParsed.currency_rate,
           base_net_price: paramsParsed.base_net_price,
           base_vat_price: paramsParsed.base_vat_price,
@@ -1332,7 +1364,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
                 cl_vat_articles_id: {
                   type: "number",
                   description:
-                    "VAT article. 1 = standard input VAT; 16 = sõiduauto 100%. Not advertised on create_purchase_invoice (GitLab #216).",
+                    "VAT article. 1 = standard input VAT; 16 = sõiduauto 100%. Confirm other treatments (e.g. 50%) from a UI-created invoice via get_purchase_invoice.",
                 },
                 cl_fringe_benefits_id: { type: "number" },
                 reversed_vat_id: { type: "number" },

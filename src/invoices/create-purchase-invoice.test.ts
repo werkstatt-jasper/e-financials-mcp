@@ -70,6 +70,24 @@ describe("createPurchaseInvoiceWithRepair", () => {
     );
   });
 
+  it("posts top-level cl_vat_articles_id on the synthesized line", async () => {
+    await createPurchaseInvoiceWithRepair(client, {
+      clients_id: 1,
+      client_name: "Neste",
+      invoice_no: "P-16",
+      invoice_date: "2025-06-01",
+      total_amount: 124,
+      vat_rate: 24,
+      cl_vat_articles_id: 16,
+    });
+    expect(client.post).toHaveBeenCalledWith(
+      "/v1/purchase_invoices",
+      expect.objectContaining({
+        items: [expect.objectContaining({ cl_vat_articles_id: 16 })],
+      }),
+    );
+  });
+
   it("skips totals repair when GET already has matching vat/gross", async () => {
     vi.mocked(client.get).mockImplementation(async (path: string) => {
       if (path === "/v1/vat_info") {

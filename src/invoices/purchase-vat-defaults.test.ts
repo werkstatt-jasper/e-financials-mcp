@@ -242,4 +242,20 @@ describe("applyPurchaseVatDefaults", () => {
     expect(result.vat_accounts_id).toBe(999);
     expect(result.cl_vat_articles_id).toBe(3);
   });
+
+  it("keeps explicit sõiduauto article 16 when the purchase article has no VAT article", () => {
+    const result = applyPurchaseVatDefaults(
+      [
+        article({
+          id: 39,
+          vat_accounts_id: 1510,
+          cl_vat_articles_id: null,
+          vat_rate_dropdown: "24",
+        }),
+      ],
+      { cl_purchase_articles_id: 39, vat_rate_dropdown: "24", cl_vat_articles_id: 16 },
+      true,
+    );
+    expect(result.cl_vat_articles_id).toBe(16);
+  });
 });
