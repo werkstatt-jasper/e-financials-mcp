@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { EFinancialsClient } from "../client.js";
 import { assertCashAccountsDimensionWritable } from "../invoices/cash-accounts-dimension.js";
 import { createPurchaseInvoiceWithRepair } from "../invoices/create-purchase-invoice.js";
+import { mergePurchaseInvoiceItems } from "../invoices/merge-purchase-invoice-items.js";
 import { registerPurchaseInvoiceWithRepair } from "../invoices/register-purchase-invoice.js";
 import { validateInvoiceData } from "../invoices/validate-invoice-data.js";
 import { resolveFileInput } from "../resolve-file-input.js";
@@ -24,6 +25,8 @@ import {
   positiveInt,
   ymdDateString,
 } from "../validation/tool-args.js";
+
+export { mergePurchaseInvoiceItems } from "../invoices/merge-purchase-invoice-items.js";
 
 const saleInvoiceStatusEnum = z.enum(["PROJECT", "CONFIRMED"]);
 const paymentStatusEnum = z.enum(["NOT_PAID", "PARTIALLY_PAID", "PAID"]);
@@ -157,6 +160,13 @@ const updateSalesInvoiceSchema = z.object({
   cl_currencies_id: optionalString,
 });
 
+const updatePurchaseInvoiceItemSchema = purchaseInvoiceItemSchema.extend({
+  id: optionalPositiveInt,
+  products_id: optionalPositiveInt,
+  vat_accounts_dimensions_id: optionalPositiveInt,
+  cl_fringe_benefits_id: optionalPositiveInt,
+});
+
 const updatePurchaseInvoiceSchema = z.object({
   id: positiveInt,
   clients_id: optionalPositiveInt,
@@ -168,6 +178,7 @@ const updatePurchaseInvoiceSchema = z.object({
   vat_amount: optionalNumber,
   description: optionalString,
   reversed_vat_id: optionalPositiveInt,
+  items: z.array(updatePurchaseInvoiceItemSchema).optional(),
   paid_in_cash: optionalBoolean,
   cash_accounts_id: optionalPositiveInt,
   cash_accounts_dimensions_id: optionalPositiveInt,
@@ -1154,7 +1165,8 @@ export function createInvoiceTools(client: EFinancialsClient) {
     },
 
     update_purchase_invoice: {
-      description: "Update a purchase invoice draft. Only works on PROJECT status invoices.",
+      description:
+        "Update a purchase invoice draft (PROJECT). Merges header fields with the current GET. Optional items[] patches existing lines by id (or appends lines without id). purchase_accounts_id is API-derived from products_id / cl_purchase_articles_id — set those instead of writing the account id directly.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -1176,7 +1188,42 @@ export function createInvoiceTools(client: EFinancialsClient) {
           reversed_vat_id: {
             type: "number",
             description:
-              "KMD (VAT declaration) classification for reverse-charge purchases. Use 7 for non-EU suppliers (KMD line 7: '0% Other purchases of goods 24% (KMD 7)'), 4 for intra-community EU acquisitions (KMD line 4). When provided, applied to every existing line item on the invoice.",
+              "KMD (VAT declaration) classification for reverse-charge purchases. Use 7 for non-EU suppliers (KMD line 7: '0% Other purchases of goods 24% (KMD 7)'), 4 for intra-community EU acquisitions (KMD line 4). When provided, applied to every line item on the invoice after any items[] merge.",
+          },
+          items: {
+            type: "array",
+            description:
+              "Partial line patches. Include id to update an existing line (other lines unchanged). Omit id to append a new line. Unknown ids are rejected. Writable fields include products_id, custom_title, amount, unit_net_price, purchase_accounts_dimensions_id, vat_accounts_id, vat_accounts_dimensions_id, cl_purchase_articles_id, cl_vat_articles_id (e.g. 16 = sõiduauto 100%), cl_fringe_benefits_id. purchase_accounts_id is read-only on the API.",
+            items: {
+              type: "object",
+              properties: {
+                id: {
+                  type: "number",
+                  description: "Existing line id (from get_purchase_invoice)",
+                },
+                custom_title: { type: "string" },
+                amount: { type: "number" },
+                unit_net_price: { type: "number" },
+                total_net_price: { type: "number" },
+                products_id: {
+                  type: "number",
+                  description: "Product/service id (sets derived purchase account)",
+                },
+                cl_purchase_articles_id: { type: "number" },
+                purchase_accounts_dimensions_id: { type: "number" },
+                vat_accounts_id: { type: "number" },
+                vat_accounts_dimensions_id: { type: "number" },
+                vat_rate: { type: "number" },
+                vat_rate_dropdown: { type: "string" },
+                cl_vat_articles_id: {
+                  type: "number",
+                  description:
+                    "VAT article. 1 = standard input VAT; 16 = sõiduauto 100%. Not advertised on create_purchase_invoice (GitLab #216).",
+                },
+                cl_fringe_benefits_id: { type: "number" },
+                reversed_vat_id: { type: "number" },
+              },
+            },
           },
           paid_in_cash: {
             type: "boolean",
@@ -1201,10 +1248,8 @@ export function createInvoiceTools(client: EFinancialsClient) {
         required: ["id"],
       },
       handler: async (params: unknown) => {
-        const parsed = parseToolArgs(updatePurchaseInvoiceSchema, params);
-        const { id, ...updateParams } = parsed as {
-          id: number;
-        } & Partial<CreatePurchaseInvoiceParams>;
+        const updateParams = parseToolArgs(updatePurchaseInvoiceSchema, params);
+        const { id } = updateParams;
 
         // Fetch current invoice to get required fields (API requires all fields in PATCH)
         const currentResponse = await client.get(`/v1/purchase_invoices/${id}`);
@@ -1214,13 +1259,21 @@ export function createInvoiceTools(client: EFinancialsClient) {
           current: current.cash_accounts_dimensions_id,
         });
 
-        const items =
-          updateParams.reversed_vat_id !== undefined
-            ? ((current.items as Array<Record<string, unknown>> | undefined) ?? []).map((item) => ({
-                ...item,
-                reversed_vat_id: updateParams.reversed_vat_id,
-              }))
-            : current.items;
+        const currentItems = (current.items as Array<Record<string, unknown>> | undefined) ?? [];
+        let items: Array<Record<string, unknown>> | unknown = current.items;
+        if (updateParams.items !== undefined) {
+          items = mergePurchaseInvoiceItems(currentItems, updateParams.items);
+        }
+
+        if (updateParams.reversed_vat_id !== undefined) {
+          const base = (Array.isArray(items) ? items : currentItems) as Array<
+            Record<string, unknown>
+          >;
+          items = base.map((item) => ({
+            ...item,
+            reversed_vat_id: updateParams.reversed_vat_id,
+          }));
+        }
 
         // Build payload with existing values as defaults, override with provided updates
         const apiPayload = {

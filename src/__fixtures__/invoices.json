@@ -102,7 +102,34 @@
     "gross_price": 100,
     "vat_price": 0,
     "notes": "n",
-    "items": []
+    "items": [
+      {
+        "id": 101,
+        "custom_title": "Generic line",
+        "amount": 1,
+        "unit_net_price": 80,
+        "total_net_price": 80,
+        "products_id": null,
+        "cl_purchase_articles_id": 39,
+        "purchase_accounts_id": 9900,
+        "purchase_accounts_dimensions_id": null,
+        "vat_accounts_id": 1,
+        "vat_accounts_dimensions_id": null
+      },
+      {
+        "id": 102,
+        "custom_title": "Second line",
+        "amount": 1,
+        "unit_net_price": 20,
+        "total_net_price": 20,
+        "products_id": null,
+        "cl_purchase_articles_id": 39,
+        "purchase_accounts_id": 9900,
+        "purchase_accounts_dimensions_id": null,
+        "vat_accounts_id": 1,
+        "vat_accounts_dimensions_id": null
+      }
+    ]
   },
   "patch_purchase_result": { "id": 11 },
   "purchase_get_minimal": {
