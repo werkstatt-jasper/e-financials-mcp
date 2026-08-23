@@ -219,6 +219,47 @@ describe("invoice tools", () => {
     expect(body).not.toHaveProperty("trade_secret");
   });
 
+  it("create_sales_invoice posts invoice_info and a distinct journal_date", async () => {
+    vi.mocked(client.get)
+      .mockResolvedValueOnce({ items: [] } as never)
+      .mockResolvedValueOnce({ items: [] } as never)
+      .mockResolvedValueOnce({ items: [] } as never);
+    vi.mocked(client.post).mockResolvedValue({ ...invoicesFixture.created_sales_invoice } as never);
+
+    await tools.create_sales_invoice.handler({
+      clients_id: 1,
+      invoice_date: "2025-08-20",
+      due_date: "2025-09-03",
+      rows: [{ description: "Item", quantity: 1, unit_price: 10 }],
+      invoice_info: "1.osamakse",
+      journal_date: "2025-07-31",
+    });
+
+    const body = vi.mocked(client.post).mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(body.invoice_info).toBe("1.osamakse");
+    expect(body.create_date).toBe("2025-08-20");
+    expect(body.journal_date).toBe("2025-07-31");
+  });
+
+  it("create_sales_invoice omits invoice_info and copies invoice_date to journal_date", async () => {
+    vi.mocked(client.get)
+      .mockResolvedValueOnce({ items: [] } as never)
+      .mockResolvedValueOnce({ items: [] } as never)
+      .mockResolvedValueOnce({ items: [] } as never);
+    vi.mocked(client.post).mockResolvedValue({ ...invoicesFixture.created_sales_invoice } as never);
+
+    await tools.create_sales_invoice.handler({
+      clients_id: 1,
+      invoice_date: "2025-06-01",
+      due_date: "2025-06-01",
+      rows: [{ description: "Item", quantity: 1, unit_price: 10 }],
+    });
+
+    const body = vi.mocked(client.post).mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(body).not.toHaveProperty("invoice_info");
+    expect(body.journal_date).toBe("2025-06-01");
+  });
+
   it("create_sales_invoice skips product lookup when all rows have products_id", async () => {
     vi.mocked(client.get)
       .mockResolvedValueOnce({
@@ -261,7 +302,7 @@ describe("invoice tools", () => {
       "/v1/sale_invoices/88",
       expect.objectContaining({
         create_date: "2025-12-01",
-        journal_date: "2025-12-01",
+        journal_date: "2025-01-01",
         items: newRows,
         cl_currencies_id: "GBP",
       }),
@@ -309,6 +350,37 @@ describe("invoice tools", () => {
     expect(client.patch).toHaveBeenLastCalledWith(
       "/v1/sale_invoices/88",
       expect.objectContaining({ trade_secret: false, notes: "keep flag" }),
+    );
+  });
+
+  it("update_sales_invoice sets invoice_info and does not clobber journal_date", async () => {
+    vi.mocked(client.get).mockResolvedValue({
+      ...invoicesFixture.sale_invoice_get_for_patch,
+      invoice_info: "old comment",
+      journal_date: "2025-07-31",
+    } as never);
+    vi.mocked(client.patch).mockResolvedValue({ id: 88 } as never);
+
+    await tools.update_sales_invoice.handler({ id: 88, invoice_info: "new comment" });
+    expect(client.patch).toHaveBeenCalledWith(
+      "/v1/sale_invoices/88",
+      expect.objectContaining({ invoice_info: "new comment", journal_date: "2025-07-31" }),
+    );
+
+    await tools.update_sales_invoice.handler({ id: 88, invoice_date: "2025-08-20" });
+    expect(client.patch).toHaveBeenLastCalledWith(
+      "/v1/sale_invoices/88",
+      expect.objectContaining({
+        create_date: "2025-08-20",
+        journal_date: "2025-07-31",
+        invoice_info: "old comment",
+      }),
+    );
+
+    await tools.update_sales_invoice.handler({ id: 88, journal_date: "2025-06-15" });
+    expect(client.patch).toHaveBeenLastCalledWith(
+      "/v1/sale_invoices/88",
+      expect.objectContaining({ journal_date: "2025-06-15" }),
     );
   });
 
