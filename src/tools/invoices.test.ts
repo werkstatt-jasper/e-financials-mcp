@@ -1094,6 +1094,54 @@ describe("invoice tools", () => {
     expect(body.items[0].vat_rate_dropdown).toBe("-");
   });
 
+  it("create_purchase_invoice posts items[].cl_vat_articles_id without falling back to 1", async () => {
+    mockPurchaseCreateFlow();
+    await tools.create_purchase_invoice.handler({
+      clients_id: 1,
+      client_name: "Neste",
+      invoice_no: "WZ216-ITEMS",
+      invoice_date: "2025-06-01",
+      items: [
+        {
+          custom_title: "Fuel",
+          amount: 1,
+          unit_net_price: 100,
+          total_net_price: 100,
+          cl_vat_articles_id: 16,
+        },
+      ],
+    });
+    const body = vi.mocked(client.post).mock.calls[0][1] as {
+      items: { cl_vat_articles_id?: number }[];
+    };
+    expect(body.items[0].cl_vat_articles_id).toBe(16);
+  });
+
+  it("create_purchase_invoice posts top-level cl_vat_articles_id on a single line", async () => {
+    mockPurchaseCreateFlow();
+    await tools.create_purchase_invoice.handler({
+      clients_id: 1,
+      client_name: "Snabb",
+      invoice_no: "WZ216-TOP",
+      invoice_date: "2025-06-01",
+      total_amount: 124,
+      vat_rate: 24,
+      cl_vat_articles_id: 16,
+    });
+    const body = vi.mocked(client.post).mock.calls[0][1] as {
+      items: { cl_vat_articles_id?: number }[];
+    };
+    expect(body.items[0].cl_vat_articles_id).toBe(16);
+  });
+
+  it("create_purchase_invoice inputSchema advertises cl_vat_articles_id", () => {
+    const props = tools.create_purchase_invoice.inputSchema.properties;
+    expect(props.cl_vat_articles_id).toMatchObject({ type: "number" });
+    expect(props.cl_vat_articles_id.description).toMatch(/sõiduauto 100%/);
+    expect(props.items.items.properties.cl_vat_articles_id).toMatchObject({ type: "number" });
+    expect(props.items.items.properties.cl_vat_articles_id.description).toMatch(/16/);
+  });
+
   it("create_purchase_invoice forwards cash-payment fields", async () => {
     mockPurchaseCreateFlow();
     await tools.create_purchase_invoice.handler({
@@ -1404,9 +1452,10 @@ describe("invoice tools", () => {
       cl_vat_articles_id: { type: "number" },
       cl_fringe_benefits_id: { type: "number" },
     });
-    expect(tools.create_purchase_invoice.inputSchema.properties.items.items).toEqual({
-      type: "object",
-    });
+    expect(
+      tools.create_purchase_invoice.inputSchema.properties.items.items.properties
+        .cl_vat_articles_id,
+    ).toMatchObject({ type: "number" });
   });
 
   it("update_purchase_invoice forwards cash-payment fields", async () => {

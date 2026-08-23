@@ -158,7 +158,7 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 | `get_purchase_invoice` | One purchase invoice. |
 | `create_sales_invoice` | Draft sales invoice. Optional `trade_secret`, printed `invoice_info` (not `notes` / not `get_invoice_info`), and `journal_date` (defaults to `invoice_date`). Omitted `number_suffix` continues the default series (never a timestamp). Row `unit` is optional; omitted copies the product unit. |
 | `validate_invoice_data` | Read-only pre-booking checks (totals, dates, VAT rates, FX). Free-tier on hosted SaaS. |
-| `create_purchase_invoice` | Draft purchase invoice with VAT defaults + create-then-repair totals. Single-line params or `items[]`; non-EUR needs `currency_rate`. Supports `reversed_vat_id` (7 = non-EU, 4 = EU). |
+| `create_purchase_invoice` | Draft purchase invoice with VAT defaults + create-then-repair totals. Single-line params or `items[]`; non-EUR needs `currency_rate`. Supports `reversed_vat_id` (7 = non-EU, 4 = EU). Optional `cl_vat_articles_id` (`16` = sõiduauto 100%; omit → fallback `1` when VAT-registered). |
 | `update_sales_invoice` | PATCH sales draft. Optional `trade_secret`, `invoice_info`, `journal_date`, and `number_suffix`; omitted keeps stored values. `invoice_date` does not overwrite `journal_date`. `rows` use the same friendly keys as create (including optional `unit`) and are remapped to API items. |
 | `delete_sales_invoice` | DELETE sales invoice. |
 | `register_sales_invoice` | Confirm sales invoice. |
