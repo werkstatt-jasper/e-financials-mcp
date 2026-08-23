@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import invoicesFixture from "../__fixtures__/invoices.json" with { type: "json" };
 import type { EFinancialsClient } from "../client.js";
-import { createInvoiceTools } from "./invoices.js";
+import { createInvoiceTools, mergePurchaseInvoiceItems } from "./invoices.js";
 import { createMockClient, parseToolJson } from "./test-helpers.js";
 
 vi.mock("node:fs/promises", () => ({
@@ -881,6 +881,160 @@ describe("invoice tools", () => {
       items: Array<Record<string, unknown>>;
     };
     expect(body.items).toBe(originalItems);
+  });
+
+  it("update_purchase_invoice merges items by id and leaves sibling lines intact", async () => {
+    vi.mocked(client.get).mockResolvedValueOnce({
+      ...invoicesFixture.purchase_get_for_patch,
+    } as never);
+    vi.mocked(client.patch).mockResolvedValue({
+      ...invoicesFixture.patch_purchase_result,
+    } as never);
+
+    await tools.update_purchase_invoice.handler({
+      id: 11,
+      items: [
+        {
+          id: 101,
+          products_id: 23864,
+          purchase_accounts_dimensions_id: 709308,
+          custom_title: "006 Prügivedu",
+        },
+      ],
+    });
+
+    const body = vi.mocked(client.patch).mock.calls[0][1] as {
+      items: Array<Record<string, unknown>>;
+    };
+    expect(body.items).toHaveLength(2);
+    expect(body.items[0]).toMatchObject({
+      id: 101,
+      products_id: 23864,
+      purchase_accounts_dimensions_id: 709308,
+      custom_title: "006 Prügivedu",
+      unit_net_price: 80,
+      purchase_accounts_id: 9900,
+    });
+    expect(body.items[1]).toMatchObject({
+      id: 102,
+      custom_title: "Second line",
+      unit_net_price: 20,
+    });
+  });
+
+  it("update_purchase_invoice appends items without id", async () => {
+    vi.mocked(client.get).mockResolvedValueOnce({
+      ...invoicesFixture.purchase_get_for_patch,
+    } as never);
+    vi.mocked(client.patch).mockResolvedValue({
+      ...invoicesFixture.patch_purchase_result,
+    } as never);
+
+    await tools.update_purchase_invoice.handler({
+      id: 11,
+      items: [{ custom_title: "New line", amount: 1, unit_net_price: 5, products_id: 99 }],
+    });
+
+    const body = vi.mocked(client.patch).mock.calls[0][1] as {
+      items: Array<Record<string, unknown>>;
+    };
+    expect(body.items).toHaveLength(3);
+    expect(body.items[2]).toMatchObject({
+      custom_title: "New line",
+      amount: 1,
+      unit_net_price: 5,
+      products_id: 99,
+    });
+  });
+
+  it("update_purchase_invoice rejects unknown item id", async () => {
+    vi.mocked(client.get).mockResolvedValueOnce({
+      ...invoicesFixture.purchase_get_for_patch,
+    } as never);
+
+    await expect(
+      tools.update_purchase_invoice.handler({
+        id: 11,
+        items: [{ id: 999, products_id: 1 }],
+      }),
+    ).rejects.toThrow(/Unknown purchase invoice line id: 999/);
+    expect(client.patch).not.toHaveBeenCalled();
+  });
+
+  it("mergePurchaseInvoiceItems keeps current lines that have no id", () => {
+    const current = [{ custom_title: "orphan" }, { id: 1, custom_title: "named" }];
+    const merged = mergePurchaseInvoiceItems(current, [{ id: 1, products_id: 5 }]);
+    expect(merged).toEqual([
+      { custom_title: "orphan" },
+      { id: 1, custom_title: "named", products_id: 5 },
+    ]);
+  });
+
+  it("update_purchase_invoice applies reversed_vat_id after items merge", async () => {
+    vi.mocked(client.get).mockResolvedValueOnce({
+      ...invoicesFixture.purchase_get_for_patch,
+    } as never);
+    vi.mocked(client.patch).mockResolvedValue({
+      ...invoicesFixture.patch_purchase_result,
+    } as never);
+
+    await tools.update_purchase_invoice.handler({
+      id: 11,
+      reversed_vat_id: 7,
+      items: [{ id: 101, products_id: 23864 }],
+    });
+
+    const body = vi.mocked(client.patch).mock.calls[0][1] as {
+      items: Array<Record<string, unknown>>;
+    };
+    expect(body.items[0]).toMatchObject({
+      id: 101,
+      products_id: 23864,
+      reversed_vat_id: 7,
+    });
+    expect(body.items[1]).toMatchObject({
+      id: 102,
+      custom_title: "Second line",
+      reversed_vat_id: 7,
+    });
+  });
+
+  it("update_purchase_invoice persists cl_vat_articles_id and cl_fringe_benefits_id", async () => {
+    vi.mocked(client.get).mockResolvedValueOnce({
+      ...invoicesFixture.purchase_get_for_patch,
+    } as never);
+    vi.mocked(client.patch).mockResolvedValue({
+      ...invoicesFixture.patch_purchase_result,
+    } as never);
+
+    await tools.update_purchase_invoice.handler({
+      id: 11,
+      items: [{ id: 101, cl_vat_articles_id: 16, cl_fringe_benefits_id: 1 }],
+    });
+
+    const body = vi.mocked(client.patch).mock.calls[0][1] as {
+      items: Array<Record<string, unknown>>;
+    };
+    expect(body.items[0]).toMatchObject({
+      id: 101,
+      cl_vat_articles_id: 16,
+      cl_fringe_benefits_id: 1,
+      unit_net_price: 80,
+    });
+  });
+
+  it("update_purchase_invoice inputSchema advertises items[] line fields", () => {
+    const items = tools.update_purchase_invoice.inputSchema.properties.items;
+    expect(items.description).toMatch(/cl_vat_articles_id/);
+    expect(items.items.properties).toMatchObject({
+      id: { type: "number" },
+      products_id: { type: "number" },
+      cl_vat_articles_id: { type: "number" },
+      cl_fringe_benefits_id: { type: "number" },
+    });
+    expect(tools.create_purchase_invoice.inputSchema.properties.items.items).toEqual({
+      type: "object",
+    });
   });
 
   it("update_purchase_invoice forwards cash-payment fields", async () => {

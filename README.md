@@ -170,7 +170,7 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 | `delete_sales_invoice_user_file` | Delete user file. |
 | `get_sales_invoice_delivery_options` | Delivery options (e-invoice/email). |
 | `deliver_sales_invoice` | Send e-invoice/email. |
-| `update_purchase_invoice` | PATCH purchase draft. Supports `reversed_vat_id` (applied to every existing line item). |
+| `update_purchase_invoice` | PATCH purchase draft. Optional `items[]` merges lines by `id` (omit `id` to append). Supports `reversed_vat_id` (applied to every line after the merge) and per-line `cl_vat_articles_id` / `cl_fringe_benefits_id`. |
 | `delete_purchase_invoice` | DELETE purchase invoice. |
 | `register_purchase_invoice` | Confirm purchase invoice after optional vat/gross repair from item sums. |
 | `invalidate_purchase_invoice` | Reverse purchase confirmation. |
