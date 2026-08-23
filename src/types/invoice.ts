@@ -77,6 +77,7 @@ export interface CreateSalesInvoiceParams {
   cl_countries_id?: string;
   show_client_balance?: boolean;
   number_suffix?: string;
+  trade_secret?: boolean;
 }
 
 export interface CreatePurchaseInvoiceParams {

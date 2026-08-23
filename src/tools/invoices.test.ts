@@ -182,6 +182,43 @@ describe("invoice tools", () => {
     );
   });
 
+  it("create_sales_invoice posts trade_secret when provided", async () => {
+    vi.mocked(client.get)
+      .mockResolvedValueOnce({ items: [] } as never)
+      .mockResolvedValueOnce({ items: [] } as never)
+      .mockResolvedValueOnce({ items: [] } as never);
+    vi.mocked(client.post).mockResolvedValue({ ...invoicesFixture.created_sales_invoice } as never);
+
+    await tools.create_sales_invoice.handler({
+      clients_id: 1,
+      invoice_date: "2025-06-01",
+      due_date: "2025-06-01",
+      rows: [{ description: "Item", quantity: 1, unit_price: 10 }],
+      trade_secret: true,
+    });
+
+    const body = vi.mocked(client.post).mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(body.trade_secret).toBe(true);
+  });
+
+  it("create_sales_invoice omits trade_secret when unset", async () => {
+    vi.mocked(client.get)
+      .mockResolvedValueOnce({ items: [] } as never)
+      .mockResolvedValueOnce({ items: [] } as never)
+      .mockResolvedValueOnce({ items: [] } as never);
+    vi.mocked(client.post).mockResolvedValue({ ...invoicesFixture.created_sales_invoice } as never);
+
+    await tools.create_sales_invoice.handler({
+      clients_id: 1,
+      invoice_date: "2025-06-01",
+      due_date: "2025-06-01",
+      rows: [{ description: "Item", quantity: 1, unit_price: 10 }],
+    });
+
+    const body = vi.mocked(client.post).mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(body).not.toHaveProperty("trade_secret");
+  });
+
   it("create_sales_invoice skips product lookup when all rows have products_id", async () => {
     vi.mocked(client.get)
       .mockResolvedValueOnce({
@@ -253,6 +290,26 @@ describe("invoice tools", () => {
     const data = parseToolJson(result) as { success: boolean; message: string };
     expect(data.success).toBe(true);
     expect(data.message).toBe("Sales invoice 88 updated");
+  });
+
+  it("update_sales_invoice sets trade_secret and preserves it when omitted", async () => {
+    vi.mocked(client.get).mockResolvedValue({
+      ...invoicesFixture.sale_invoice_get_for_patch,
+      trade_secret: false,
+    } as never);
+    vi.mocked(client.patch).mockResolvedValue({ id: 88 } as never);
+
+    await tools.update_sales_invoice.handler({ id: 88, trade_secret: true });
+    expect(client.patch).toHaveBeenCalledWith(
+      "/v1/sale_invoices/88",
+      expect.objectContaining({ trade_secret: true }),
+    );
+
+    await tools.update_sales_invoice.handler({ id: 88, description: "keep flag" });
+    expect(client.patch).toHaveBeenLastCalledWith(
+      "/v1/sale_invoices/88",
+      expect.objectContaining({ trade_secret: false, notes: "keep flag" }),
+    );
   });
 
   it("delete_sales_invoice calls DELETE and returns API JSON", async () => {

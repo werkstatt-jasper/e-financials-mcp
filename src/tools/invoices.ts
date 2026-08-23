@@ -103,6 +103,7 @@ const createSalesInvoiceSchema = z.object({
   cl_countries_id: optionalString,
   show_client_balance: optionalBoolean,
   number_suffix: optionalString,
+  trade_secret: optionalBoolean,
 });
 
 const purchaseInvoiceItemSchema = z.object({
@@ -158,6 +159,7 @@ const updateSalesInvoiceSchema = z.object({
   rows: z.array(z.unknown()).optional(),
   description: optionalString,
   cl_currencies_id: optionalString,
+  trade_secret: optionalBoolean,
 });
 
 const updatePurchaseInvoiceItemSchema = purchaseInvoiceItemSchema.extend({
@@ -503,6 +505,11 @@ export function createInvoiceTools(client: EFinancialsClient) {
             description:
               "Invoice number (auto-generated from the default series start value if omitted)",
           },
+          trade_secret: {
+            type: "boolean",
+            description:
+              "True if the invoice contains a professional or official secret (Estonian UI: Müügiarve sisaldab kutse- või ametisaladust). Only PROJECT drafts. Omit to keep the API default (false).",
+          },
         },
         required: ["clients_id", "invoice_date", "due_date", "rows"],
       },
@@ -548,6 +555,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
           cl_currencies_id: args.cl_currencies_id ?? "EUR",
           show_client_balance: args.show_client_balance ?? false,
           notes: args.description,
+          ...(args.trade_secret !== undefined ? { trade_secret: args.trade_secret } : {}),
           items: args.rows.map((row) => ({
             custom_title: row.description,
             products_id: row.products_id ?? defaultProductId,
@@ -791,6 +799,11 @@ export function createInvoiceTools(client: EFinancialsClient) {
             },
           },
           description: { type: "string" },
+          trade_secret: {
+            type: "boolean",
+            description:
+              "True if the invoice contains a professional or official secret (Estonian UI: Müügiarve sisaldab kutse- või ametisaladust). Only PROJECT drafts. Omit to keep the current value.",
+          },
         },
         required: ["id"],
       },
@@ -817,6 +830,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
           cl_currencies_id: updateParams.cl_currencies_id ?? current.cl_currencies_id,
           show_client_balance: current.show_client_balance,
           notes: updateParams.description ?? current.notes,
+          trade_secret: updateParams.trade_secret ?? current.trade_secret,
           items: updateParams.rows ?? current.items,
         };
 
