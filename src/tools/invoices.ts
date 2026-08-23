@@ -4,6 +4,11 @@ import { assertCashAccountsDimensionWritable } from "../invoices/cash-accounts-d
 import { createPurchaseInvoiceWithRepair } from "../invoices/create-purchase-invoice.js";
 import { mergePurchaseInvoiceItems } from "../invoices/merge-purchase-invoice-items.js";
 import { registerPurchaseInvoiceWithRepair } from "../invoices/register-purchase-invoice.js";
+import {
+  extractSeriesList,
+  type InvoiceNumberFields,
+  nextSalesInvoiceSuffix,
+} from "../invoices/sales-invoice-number.js";
 import { validateInvoiceData } from "../invoices/validate-invoice-data.js";
 import { resolveFileInput } from "../resolve-file-input.js";
 import type {
@@ -164,6 +169,7 @@ const updateSalesInvoiceSchema = z.object({
   trade_secret: optionalBoolean,
   invoice_info: optionalString,
   journal_date: optionalYmd,
+  number_suffix: optionalString,
 });
 
 const updatePurchaseInvoiceItemSchema = purchaseInvoiceItemSchema.extend({
@@ -507,7 +513,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
           number_suffix: {
             type: "string",
             description:
-              "Invoice number (auto-generated from the default series start value if omitted)",
+              "Invoice number suffix. Omit to continue the default series (last matching suffix + 1, or number_start_value). Never a timestamp.",
           },
           trade_secret: {
             type: "boolean",
@@ -532,14 +538,17 @@ export function createInvoiceTools(client: EFinancialsClient) {
 
         const needsProductLookup = args.rows.some((r) => !r.products_id);
 
-        const [seriesResponse, templatesResponse, productsResponse] = await Promise.all([
-          client.get("/v1/invoice_series"),
-          client.get("/v1/templates"),
-          needsProductLookup ? client.get("/v1/products") : Promise.resolve({ items: [] }),
-        ]);
+        const [seriesResponse, templatesResponse, productsResponse, listedInvoices] =
+          await Promise.all([
+            client.get("/v1/invoice_series"),
+            client.get("/v1/templates"),
+            needsProductLookup ? client.get("/v1/products") : Promise.resolve({ items: [] }),
+            args.number_suffix === undefined
+              ? client.getAllPages("/v1/sale_invoices")
+              : Promise.resolve([]),
+          ]);
 
-        const seriesList = (seriesResponse.items ?? []) as Array<Record<string, unknown>>;
-        const defaultSeries = seriesList.find((s) => s.is_default === true) ?? seriesList[0] ?? {};
+        const seriesList = extractSeriesList(seriesResponse);
 
         const templatesList = (templatesResponse.items ?? []) as Array<Record<string, unknown>>;
         const defaultTemplate = templatesList[0] ?? {};
@@ -554,8 +563,10 @@ export function createInvoiceTools(client: EFinancialsClient) {
           Math.round((dueDate.getTime() - invoiceDate.getTime()) / 86_400_000),
         );
 
-        const numberSuffix =
-          args.number_suffix ?? String(defaultSeries.number_start_value ?? Date.now());
+        const invoices = Array.isArray(listedInvoices)
+          ? (listedInvoices as InvoiceNumberFields[])
+          : [];
+        const numberSuffix = args.number_suffix ?? nextSalesInvoiceSuffix(seriesList, invoices);
 
         const apiPayload = {
           sale_invoice_type: args.sale_invoice_type ?? "INVOICE",
@@ -829,6 +840,11 @@ export function createInvoiceTools(client: EFinancialsClient) {
             description:
               "Turnover / journal date (YYYY-MM-DD). Only PROJECT drafts. Omit to keep the current value (invoice_date does not overwrite it).",
           },
+          number_suffix: {
+            type: "string",
+            description:
+              "Invoice number suffix. Only PROJECT drafts. Omit to keep the current value.",
+          },
         },
         required: ["id"],
       },
@@ -848,7 +864,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
           cl_templates_id: current.cl_templates_id,
           clients_id: updateParams.clients_id ?? current.clients_id,
           cl_countries_id: current.cl_countries_id,
-          number_suffix: current.number_suffix,
+          number_suffix: updateParams.number_suffix ?? current.number_suffix,
           create_date: updateParams.invoice_date ?? current.create_date,
           journal_date: updateParams.journal_date ?? current.journal_date,
           term_days: current.term_days,

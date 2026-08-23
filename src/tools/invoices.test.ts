@@ -120,7 +120,7 @@ describe("invoice tools", () => {
       "/v1/sale_invoices",
       expect.objectContaining({
         cl_templates_id: 1,
-        number_suffix: expect.any(String),
+        number_suffix: "1",
         term_days: 0,
       }),
     );
@@ -148,6 +148,78 @@ describe("invoice tools", () => {
         cl_templates_id: 7,
         number_suffix: "500",
       }),
+    );
+  });
+
+  it("create_sales_invoice increments suffix from a raw-array series and existing invoices", async () => {
+    vi.mocked(client.get)
+      .mockResolvedValueOnce([
+        { id: 1, is_default: true, number_prefix: "INV", number_start_value: 1 },
+      ] as never)
+      .mockResolvedValueOnce({ items: [{ id: 5 }] } as never)
+      .mockResolvedValueOnce({ items: [{ id: 42 }] } as never);
+    vi.mocked(client.getAllPages).mockResolvedValue([
+      { number_prefix: "INV", number_suffix: "5" },
+      { number_prefix: "OTH", number_suffix: "99" },
+    ] as never);
+    vi.mocked(client.post).mockResolvedValue({ ...invoicesFixture.created_sales_invoice } as never);
+
+    await tools.create_sales_invoice.handler({
+      clients_id: 1,
+      invoice_date: "2025-06-01",
+      due_date: "2025-06-01",
+      rows: [{ description: "Item", quantity: 1, unit_price: 10 }],
+    });
+
+    expect(client.getAllPages).toHaveBeenCalledWith("/v1/sale_invoices");
+    expect(client.post).toHaveBeenCalledWith(
+      "/v1/sale_invoices",
+      expect.objectContaining({ number_suffix: "6" }),
+    );
+  });
+
+  it("create_sales_invoice uses max suffix + 1 when series is empty", async () => {
+    vi.mocked(client.get)
+      .mockResolvedValueOnce({} as never)
+      .mockResolvedValueOnce({ items: [{ id: 1 }] } as never)
+      .mockResolvedValueOnce({ items: [{ id: 1 }] } as never);
+    vi.mocked(client.getAllPages).mockResolvedValue([
+      { number_prefix: "X", number_suffix: "1443" },
+    ] as never);
+    vi.mocked(client.post).mockResolvedValue({ ...invoicesFixture.created_sales_invoice } as never);
+
+    await tools.create_sales_invoice.handler({
+      clients_id: 1,
+      invoice_date: "2025-06-01",
+      due_date: "2025-06-01",
+      rows: [{ description: "Item", quantity: 1, unit_price: 10 }],
+    });
+
+    expect(client.post).toHaveBeenCalledWith(
+      "/v1/sale_invoices",
+      expect.objectContaining({ number_suffix: "1444" }),
+    );
+  });
+
+  it("create_sales_invoice keeps an explicit number_suffix and skips listing invoices", async () => {
+    vi.mocked(client.get)
+      .mockResolvedValueOnce({ items: [] } as never)
+      .mockResolvedValueOnce({ items: [] } as never)
+      .mockResolvedValueOnce({ items: [] } as never);
+    vi.mocked(client.post).mockResolvedValue({ ...invoicesFixture.created_sales_invoice } as never);
+
+    await tools.create_sales_invoice.handler({
+      clients_id: 1,
+      invoice_date: "2025-06-01",
+      due_date: "2025-06-01",
+      rows: [{ description: "Item", quantity: 1, unit_price: 10 }],
+      number_suffix: "2001",
+    });
+
+    expect(client.getAllPages).not.toHaveBeenCalled();
+    expect(client.post).toHaveBeenCalledWith(
+      "/v1/sale_invoices",
+      expect.objectContaining({ number_suffix: "2001" }),
     );
   });
 
@@ -381,6 +453,26 @@ describe("invoice tools", () => {
     expect(client.patch).toHaveBeenLastCalledWith(
       "/v1/sale_invoices/88",
       expect.objectContaining({ journal_date: "2025-06-15" }),
+    );
+  });
+
+  it("update_sales_invoice sets number_suffix and preserves it when omitted", async () => {
+    vi.mocked(client.get).mockResolvedValue({
+      ...invoicesFixture.sale_invoice_get_for_patch,
+      number_suffix: "10",
+    } as never);
+    vi.mocked(client.patch).mockResolvedValue({ id: 88 } as never);
+
+    await tools.update_sales_invoice.handler({ id: 88, number_suffix: "11" });
+    expect(client.patch).toHaveBeenCalledWith(
+      "/v1/sale_invoices/88",
+      expect.objectContaining({ number_suffix: "11" }),
+    );
+
+    await tools.update_sales_invoice.handler({ id: 88, description: "keep number" });
+    expect(client.patch).toHaveBeenLastCalledWith(
+      "/v1/sale_invoices/88",
+      expect.objectContaining({ number_suffix: "10", notes: "keep number" }),
     );
   });
 
