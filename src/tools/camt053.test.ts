@@ -151,13 +151,25 @@ describe("process_camt053", () => {
   let client: EFinancialsClient;
   let tools: ReturnType<typeof createCamt053Tools>;
 
-  /** Existing rows come from the plain list; the type filter returns the rows stored as incoming. */
-  function mockLookups(existing: unknown[] = [], incomingIds: number[] = []) {
+  /**
+   * Existing rows come from the plain list. A one-day unfiltered list also
+   * includes the created ids, and the type filter returns the incoming ones.
+   */
+  function mockLookups(existing: Array<{ id: number }> = [], incomingIds: number[] = []) {
     vi.mocked(client.getAllPages).mockImplementation(async (path, params) => {
       if (path === "/v1/transactions") {
-        return (
-          params?.type === undefined ? existing : incomingIds.map((id) => ({ id, type: "C" }))
-        ) as never;
+        if (params?.type !== undefined) {
+          return incomingIds.map((id) => ({ id, type: "C" })) as never;
+        }
+        const oneDay = params?.start_date != null && params.start_date === params.end_date;
+        if (!oneDay) {
+          return existing as never;
+        }
+        const listed = new Set(existing.map((row) => row.id));
+        return [
+          ...existing,
+          ...incomingIds.filter((id) => !listed.has(id)).map((id) => ({ id, type: "C" })),
+        ] as never;
       }
       if (path === "/v1/account_dimensions") {
         return [dimension] as never;
@@ -376,15 +388,18 @@ describe("process_camt053", () => {
         ] as never;
       }
       if (path === "/v1/transactions") {
-        return [
-          existingTx({
-            id: 77,
-            bank_ref_number: "",
-            amount: 15,
-            date: "2025-06-10",
-            description: "Same note",
-          }),
-        ] as never;
+        const existing = existingTx({
+          id: 77,
+          bank_ref_number: "",
+          amount: 15,
+          date: "2025-06-10",
+          description: "Same note",
+        });
+        return (
+          params?.start_date != null && params.start_date === params.end_date
+            ? [existing, { id: 500, type: "C" }]
+            : [existing]
+        ) as never;
       }
       if (path === "/v1/account_dimensions") {
         return [dimension] as never;

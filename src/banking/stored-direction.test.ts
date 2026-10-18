@@ -117,12 +117,17 @@ describe("stored direction", () => {
     expect(pageOf([], 1)).toEqual({ items: [], current_page: 1, total_pages: 1 });
   });
 
-  it("reads one transaction's direction from that day's incoming rows", async () => {
+  it("reads one transaction's direction from that day's lists", async () => {
     const client: EFinancialsClient = createMockClient();
     mockTransactionLists(client, [tx(8), tx(9)], [9]);
 
     expect(await storedDirection(client, 9, "2026-10-01T00:00:00")).toBe("incoming");
     expect(await storedDirection(client, 8, "2026-10-01")).toBe("outgoing");
+    expect(await storedDirection(client, 1, "2026-10-01")).toBe("unknown");
+    expect(client.getAllPages).toHaveBeenCalledWith("/v1/transactions", {
+      start_date: "2026-10-01",
+      end_date: "2026-10-01",
+    });
     expect(client.getAllPages).toHaveBeenCalledWith("/v1/transactions", {
       start_date: "2026-10-01",
       end_date: "2026-10-01",
@@ -130,5 +135,15 @@ describe("stored direction", () => {
     });
     expect(toolTypeForDirection("incoming")).toBe("C");
     expect(toolTypeForDirection("outgoing")).toBe("D");
+  });
+
+  it("returns unknown for a missing or malformed date without listing", async () => {
+    const client = createMockClient();
+
+    expect(await storedDirection(client, 1, undefined)).toBe("unknown");
+    expect(await storedDirection(client, 1, null)).toBe("unknown");
+    expect(await storedDirection(client, 1, "")).toBe("unknown");
+    expect(await storedDirection(client, 1, "not-a-date")).toBe("unknown");
+    expect(client.getAllPages).not.toHaveBeenCalled();
   });
 });

@@ -21,6 +21,11 @@ describe("transaction tools", () => {
     vi.mocked(readFile).mockReset();
   });
 
+  /** The created id is in that day's unfiltered list and not in the incoming filter. */
+  function listOutgoingDraft(id: number) {
+    mockTransactionLists(client, [{ id }], []);
+  }
+
   it("list_transactions type C pages RIK's incoming-rows filter", async () => {
     vi.mocked(client.get).mockResolvedValue({ ...transactionsFixture.list_paginated } as never);
 
@@ -143,6 +148,10 @@ describe("transaction tools", () => {
     expect(client.getAllPages).toHaveBeenCalledWith("/v1/transactions", {
       start_date: "2026-10-01",
       end_date: "2026-10-01",
+    });
+    expect(client.getAllPages).toHaveBeenCalledWith("/v1/transactions", {
+      start_date: "2026-10-01",
+      end_date: "2026-10-01",
       type: "D",
     });
     expect(parseToolJson(outgoing)).toEqual({
@@ -150,11 +159,37 @@ describe("transaction tools", () => {
       description: "Wire",
       type: "D",
       date: "2026-10-01",
+      direction_confirmed: true,
     });
 
     mockTransactionLists(client, [{ id: 42 }], [42]);
     const incoming = await tools.get_transaction.handler({ id: 42 });
-    expect(parseToolJson(incoming)).toMatchObject({ id: 42, type: "C" });
+    expect(parseToolJson(incoming)).toMatchObject({
+      id: 42,
+      type: "C",
+      direction_confirmed: true,
+    });
+  });
+
+  it("get_transaction reports unknown when the row is not in that day's lists", async () => {
+    vi.mocked(client.get).mockResolvedValue({ ...transactionsFixture.single } as never);
+
+    const missing = parseToolJson(await tools.get_transaction.handler({ id: 42 })) as {
+      type: string | null;
+      direction_confirmed: boolean;
+    };
+    expect(missing.type).toBeNull();
+    expect(missing.direction_confirmed).toBe(false);
+
+    vi.mocked(client.getAllPages).mockClear();
+    vi.mocked(client.get).mockResolvedValue({ id: 42, description: "Wire", type: "C" } as never);
+    const noDate = parseToolJson(await tools.get_transaction.handler({ id: 42 })) as {
+      type: string | null;
+      direction_confirmed: boolean;
+    };
+    expect(noDate.type).toBeNull();
+    expect(noDate.direction_confirmed).toBe(false);
+    expect(client.getAllPages).not.toHaveBeenCalled();
   });
 
   it("get_unprocessed_transactions returns empty when there are no drafts", async () => {
@@ -244,6 +279,7 @@ describe("transaction tools", () => {
       messages: ["Outgoing payment has been saved."],
     } as never);
     vi.mocked(client.get).mockResolvedValue({ id: 1, type: "C", status: "PROJECT" } as never);
+    listOutgoingDraft(1);
 
     const result = await tools.create_transaction.handler({
       accounts_dimensions_id: 4,
@@ -269,6 +305,7 @@ describe("transaction tools", () => {
       id: 1,
       type: "D",
       rik_messages: ["Outgoing payment has been saved."],
+      direction_confirmed: true,
     });
   });
 
@@ -303,6 +340,7 @@ describe("transaction tools", () => {
       messages: ["Outgoing payment has been saved."],
     } as never);
     vi.mocked(client.get).mockResolvedValue({ id: 3, type: "C", status: "PROJECT" } as never);
+    listOutgoingDraft(3);
 
     await tools.create_transaction.handler({
       accounts_dimensions_id: 2,
@@ -464,10 +502,15 @@ describe("transaction tools", () => {
       messages: ["Outgoing payment has been saved."],
     } as never);
     vi.mocked(client.get).mockResolvedValue({ id: 7, type: "C", date: "2026-10-01" } as never);
+    listOutgoingDraft(7);
 
     const result = await tools.update_transaction.handler({ id: 7, type: "D" });
 
     expect(client.patch).toHaveBeenCalledWith("/v1/transactions/7", { type: "C" });
+    expect(client.getAllPages).toHaveBeenCalledWith("/v1/transactions", {
+      start_date: "2026-10-01",
+      end_date: "2026-10-01",
+    });
     expect(client.getAllPages).toHaveBeenCalledWith("/v1/transactions", {
       start_date: "2026-10-01",
       end_date: "2026-10-01",
@@ -501,6 +544,26 @@ describe("transaction tools", () => {
     expect(unconfirmed.direction_confirmed).toBe(false);
   });
 
+  it("update_transaction leaves the direction unconfirmed when the row is not listed", async () => {
+    vi.mocked(client.patch).mockResolvedValue({} as never);
+    vi.mocked(client.get).mockResolvedValue({ id: 7, type: "C", date: "2026-10-01" } as never);
+
+    const missing = parseToolJson(await tools.update_transaction.handler({ id: 7, type: "D" })) as {
+      success: boolean;
+      direction_confirmed: boolean;
+    };
+    expect(missing.success).toBe(true);
+    expect(missing.direction_confirmed).toBe(false);
+
+    vi.mocked(client.getAllPages).mockClear();
+    vi.mocked(client.get).mockResolvedValue({ id: 7, type: "C" } as never);
+    const noDate = parseToolJson(await tools.update_transaction.handler({ id: 7, type: "C" })) as {
+      direction_confirmed: boolean;
+    };
+    expect(noDate.direction_confirmed).toBe(false);
+    expect(client.getAllPages).not.toHaveBeenCalled();
+  });
+
   it("pay_purchase_invoice creates an outgoing payment and registers it", async () => {
     vi.mocked(client.get)
       .mockResolvedValueOnce({
@@ -521,6 +584,7 @@ describe("transaction tools", () => {
     vi.mocked(client.patch).mockResolvedValue({
       messages: ["Outgoing payment has been confirmed."],
     } as never);
+    listOutgoingDraft(77);
 
     const result = await tools.pay_purchase_invoice.handler({
       purchase_invoices_id: 10,
@@ -595,6 +659,38 @@ describe("transaction tools", () => {
     expect(client.delete).not.toHaveBeenCalled();
   });
 
+  it("pay_purchase_invoice keeps a draft that is not in that day's lists", async () => {
+    vi.mocked(client.get).mockResolvedValue({
+      id: 10,
+      number: "1245",
+      status: "CONFIRMED",
+      payment_status: "NOT_PAID",
+      gross_price: 37.2,
+      clients_id: 19,
+      cl_currencies_id: "EUR",
+    } as never);
+    vi.mocked(client.post).mockResolvedValue({
+      id: 81,
+      messages: ["Outgoing payment has been saved."],
+    } as never);
+
+    const result = parseToolJson(
+      await tools.pay_purchase_invoice.handler({
+        purchase_invoices_id: 10,
+        accounts_dimensions_id: 41442,
+        date: "2026-10-01",
+      }),
+    );
+
+    expect(result).toMatchObject({
+      registered: false,
+      transaction_id: 81,
+      direction_confirmed: false,
+    });
+    expect(client.patch).not.toHaveBeenCalled();
+    expect(client.delete).not.toHaveBeenCalled();
+  });
+
   it("pay_purchase_invoice refuses when the supplier has a matching draft", async () => {
     const invoice = {
       id: 10,
@@ -635,6 +731,7 @@ describe("transaction tools", () => {
       messages: ["Outgoing payment has been saved."],
     } as never);
     vi.mocked(client.patch).mockResolvedValue({} as never);
+    listOutgoingDraft(80);
     const paid = parseToolJson(
       await tools.pay_purchase_invoice.handler({
         purchase_invoices_id: 10,
@@ -644,7 +741,11 @@ describe("transaction tools", () => {
       }),
     );
     expect(paid).toMatchObject({ transaction_id: 80, registered: true });
-    expect(client.getAllPages).toHaveBeenCalledTimes(1);
+    expect(client.getAllPages).toHaveBeenCalledTimes(2);
+    expect(client.getAllPages).toHaveBeenCalledWith("/v1/transactions", {
+      start_date: "2026-10-01",
+      end_date: "2026-10-01",
+    });
     expect(client.getAllPages).toHaveBeenCalledWith("/v1/transactions", {
       start_date: "2026-10-01",
       end_date: "2026-10-01",
@@ -707,6 +808,7 @@ describe("transaction tools", () => {
       messages: ["Outgoing payment has been saved."],
     } as never);
     vi.mocked(client.patch).mockResolvedValue({} as never);
+    listOutgoingDraft(77);
 
     const result = await tools.pay_purchase_invoice.handler({
       purchase_invoices_id: 10,
@@ -744,6 +846,7 @@ describe("transaction tools", () => {
       messages: ["Väljaminev makse on salvestatud."],
     } as never);
     vi.mocked(client.patch).mockResolvedValue({} as never);
+    listOutgoingDraft(77);
 
     await tools.pay_purchase_invoice.handler({
       purchase_invoices_id: 10,
@@ -775,6 +878,7 @@ describe("transaction tools", () => {
       messages: ["Outgoing payment has been saved."],
     } as never);
     vi.mocked(client.patch).mockResolvedValue({} as never);
+    listOutgoingDraft(78);
 
     await tools.pay_purchase_invoice.handler({
       purchase_invoices_id: 11,
@@ -915,6 +1019,7 @@ describe("transaction tools", () => {
     } as never);
     vi.mocked(client.patch).mockRejectedValue(new Error("register no"));
     vi.mocked(client.delete).mockResolvedValue({} as never);
+    listOutgoingDraft(77);
 
     await expect(
       tools.pay_purchase_invoice.handler({
@@ -944,6 +1049,7 @@ describe("transaction tools", () => {
     } as never);
     vi.mocked(client.patch).mockRejectedValue("register-string");
     vi.mocked(client.delete).mockRejectedValue(new Error("delete no"));
+    listOutgoingDraft(77);
 
     await expect(
       tools.pay_purchase_invoice.handler({
@@ -972,6 +1078,7 @@ describe("transaction tools", () => {
       messages: ["Outgoing payment has been saved."],
     } as never);
     vi.mocked(client.patch).mockResolvedValue({} as never);
+    listOutgoingDraft(77);
 
     const result = await tools.pay_purchase_invoice.handler({
       purchase_invoices_id: 10,
@@ -1028,6 +1135,7 @@ describe("transaction tools", () => {
       messages: ["Outgoing payment has been saved."],
     } as never);
     vi.mocked(client.patch).mockResolvedValue({} as never);
+    listOutgoingDraft(77);
 
     await tools.pay_purchase_invoice.handler({
       purchase_invoices_id: 10,
@@ -1082,6 +1190,7 @@ describe("transaction tools", () => {
       messages: ["Outgoing payment has been saved."],
     } as never);
     vi.mocked(client.patch).mockResolvedValue({} as never);
+    listOutgoingDraft(77);
 
     await tools.pay_purchase_invoice.handler({
       purchase_invoices_id: 10,

@@ -1,7 +1,7 @@
 import type { EFinancialsClient } from "../client.js";
 import type { Transaction } from "../types/transaction.js";
 import { errorMessage } from "./errors.js";
-import { storedDirection } from "./stored-direction.js";
+import { type StoredDirection, storedDirection } from "./stored-direction.js";
 import {
   directionFromToolType,
   reportedMessages,
@@ -14,7 +14,7 @@ import {
 
 export interface VerifiedTransaction extends Transaction {
   rik_messages: string[];
-  /** False when the stored direction could not be checked. The draft is kept. */
+  /** False when the stored direction is unknown or could not be checked. The draft is kept. */
   direction_confirmed: boolean;
   /** Set when the draft exists but could not be read back; other fields then come from the request. */
   read_back_error?: string;
@@ -44,12 +44,12 @@ async function deleteDraft(client: EFinancialsClient, id: number): Promise<void>
 async function checkDirection(
   client: EFinancialsClient,
   id: number,
-  date: string,
-): Promise<TransactionDirection | undefined> {
+  date: unknown,
+): Promise<StoredDirection> {
   try {
     return await storedDirection(client, id, date);
   } catch {
-    return undefined;
+    return "unknown";
   }
 }
 
@@ -71,8 +71,8 @@ async function readBack(
 /**
  * Create a PROJECT transaction. The wire `type` is the opposite of the tool
  * contract. When RIK stored the other direction, the draft is patched once and
- * then deleted. When the stored direction cannot be checked, the draft is kept
- * with `direction_confirmed: false`.
+ * then deleted. When the stored direction is unknown, the draft is kept with
+ * `direction_confirmed: false`.
  */
 export async function createVerifiedTransaction(
   client: EFinancialsClient,
@@ -87,7 +87,7 @@ export async function createVerifiedTransaction(
     throw new Error("RIK did not return a transaction id");
   }
 
-  const date = String(body.date);
+  const date = body.date;
   let messages = rikMessages(posted);
   let stored = await checkDirection(client, id, date);
   if (stored === oppositeDirection(direction)) {

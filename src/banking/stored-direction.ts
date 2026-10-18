@@ -2,6 +2,9 @@ import type { EFinancialsClient } from "../client.js";
 import type { Transaction } from "../types/transaction.js";
 import type { ToolTransactionType, TransactionDirection } from "./transaction-direction.js";
 
+/** Incoming or outgoing only with positive evidence; unknown when the row cannot be placed. */
+export type StoredDirection = TransactionDirection | "unknown";
+
 /**
  * RIK's GET returns `type: "C"` for every transaction, whatever was stored.
  * The list filter ignores the letter it is given and returns the rows stored
@@ -117,15 +120,32 @@ export function pageOf(rows: readonly Transaction[], page: number): TransactionP
   };
 }
 
-/** Stored direction of one transaction, from that day's incoming rows. */
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Stored direction of one transaction on that day.
+ * Incoming when the row is in the incoming filter, outgoing when it is only in
+ * the unfiltered list, and unknown when it is in neither or the date is unusable.
+ * A missing row is not treated as outgoing.
+ */
 export async function storedDirection(
   client: EFinancialsClient,
   id: number,
-  date: string,
-): Promise<TransactionDirection> {
-  const day = date.slice(0, 10);
-  const incomingIds = await loadIncomingIds(client, { start_date: day, end_date: day });
-  return incomingIds.has(id) ? "incoming" : "outgoing";
+  date: unknown,
+): Promise<StoredDirection> {
+  const day = typeof date === "string" ? date.slice(0, 10) : "";
+  if (!DAY.test(day)) {
+    return "unknown";
+  }
+  const filter = { start_date: day, end_date: day };
+  const [rows, incomingIds] = await Promise.all([
+    client.getAllPages<Transaction>("/v1/transactions", filter),
+    loadIncomingIds(client, filter),
+  ]);
+  if (incomingIds.has(id)) {
+    return "incoming";
+  }
+  return rows.some((row) => row.id === id) ? "outgoing" : "unknown";
 }
 
 export function toolTypeForDirection(direction: TransactionDirection): ToolTransactionType {

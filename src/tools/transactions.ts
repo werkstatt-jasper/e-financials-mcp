@@ -6,6 +6,7 @@ import {
   labelFetchedRows,
   loadLabelledTransactions,
   pageOf,
+  type StoredDirection,
   storedDirection,
   type TransactionListFilter,
   type TransactionPage,
@@ -16,7 +17,6 @@ import {
   reportedMessages,
   rikMessages,
   rikTypeForToolType,
-  type TransactionDirection,
 } from "../banking/transaction-direction.js";
 import type { EFinancialsClient } from "../client.js";
 import { roundMoney } from "../money.js";
@@ -235,7 +235,7 @@ export function createTransactionTools(client: EFinancialsClient) {
 
     get_transaction: {
       description:
-        "Get a bank transaction by ID. The returned type is the stored direction (C = money in, D = money out), looked up with RIK's list filter because RIK's own GET type field is always C. The JSON may include read-only items[] relation rows (relation_table, relation_id, amount, accounts_id). To add relations and confirm, use register_transaction with a full distributions array — the API does not support incremental draft rows.",
+        "Get a bank transaction by ID. The returned type is the stored direction (C = money in, D = money out). RIK's own GET type field is always C, so the direction comes from that day's lists: incoming when the row is in the incoming filter, outgoing when it is only in the unfiltered list. When it is in neither, or the row has no valid date, type is null and direction_confirmed is false. The JSON may include read-only items[] relation rows (relation_table, relation_id, amount, accounts_id). To add relations and confirm, use register_transaction with a full distributions array — the API does not support incremental draft rows.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -249,12 +249,17 @@ export function createTransactionTools(client: EFinancialsClient) {
       handler: async (params: unknown) => {
         const args = parseToolArgs(transactionIdSchema, params);
         const response = (await client.get(`/v1/transactions/${args.id}`)) as Transaction;
-        const direction = await storedDirection(client, args.id, String(response.date));
+        const direction = await storedDirection(client, args.id, response.date);
+        const type = direction === "unknown" ? null : toolTypeForDirection(direction);
         return {
           content: [
             {
               type: "text" as const,
-              text: JSON.stringify({ ...response, type: toolTypeForDirection(direction) }, null, 2),
+              text: JSON.stringify(
+                { ...response, type, direction_confirmed: type != null },
+                null,
+                2,
+              ),
             },
           ],
         };
@@ -313,7 +318,7 @@ export function createTransactionTools(client: EFinancialsClient) {
 
     update_transaction: {
       description:
-        "Update a PROJECT draft: clients_id, accounts_id, description, and optional type (C = money in, D = money out). type is translated to RIK's opposite letter, then the stored direction is checked. If RIK still stores the other direction, that is an error and the row is left as RIK saved it. If the check itself fails, the update stands with direction_confirmed false. Does not add or change distribution/relation rows — that is register_transaction (e-arveldaja UI: Add a row under transaction relations, then Save and confirm). Set clients_id before register when missing; the API often rejects confirmation with buyer/supplier missing.",
+        "Update a PROJECT draft: clients_id, accounts_id, description, and optional type (C = money in, D = money out). type is translated to RIK's opposite letter, then the stored direction is checked. If RIK still stores the other direction, that is an error and the row is left as RIK saved it. If the row is not in that day's lists, it has no valid date, or the check itself fails, the update stands with direction_confirmed false. Does not add or change distribution/relation rows — that is register_transaction (e-arveldaja UI: Add a row under transaction relations, then Save and confirm). Set clients_id before register when missing; the API often rejects confirmation with buyer/supplier missing.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -337,7 +342,7 @@ export function createTransactionTools(client: EFinancialsClient) {
             type: "string",
             enum: ["C", "D"],
             description:
-              "Direction on a PROJECT draft: C = money in, D = money out. RIK stores the opposite letter; the stored direction is checked after the update.",
+              "Direction on a PROJECT draft: C = money in, D = money out. RIK stores the opposite letter; the stored direction is checked after the update. Unknown direction leaves the update in place with direction_confirmed false.",
           },
         },
         required: ["id"],
@@ -352,15 +357,15 @@ export function createTransactionTools(client: EFinancialsClient) {
         if (type !== undefined) body.type = rikTypeForToolType(type);
         const response = await client.patch<Transaction>(`/v1/transactions/${id}`, body);
         const messages = rikMessages(response);
-        let stored: TransactionDirection | undefined;
+        let stored: StoredDirection | undefined;
         if (type !== undefined) {
           try {
             const row = (await client.get(`/v1/transactions/${id}`)) as Transaction;
-            stored = await storedDirection(client, id, String(row.date));
+            stored = await storedDirection(client, id, row.date);
           } catch {
-            stored = undefined;
+            stored = "unknown";
           }
-          if (stored !== undefined && stored !== directionFromToolType(type)) {
+          if (stored !== "unknown" && stored !== directionFromToolType(type)) {
             throw new Error(
               `Transaction ${id} was updated, but RIK still stores it as ${stored}, not type ${type} (${directionFromToolType(type)}).${reportedMessages(messages)}`,
             );
@@ -394,7 +399,7 @@ export function createTransactionTools(client: EFinancialsClient) {
 
     create_transaction: {
       description:
-        "Create a bank transaction draft (PROJECT). type C is money in and type D is money out. RIK stores the opposite letter (D incoming, C outgoing); this tool translates it and checks the stored direction. The result is the stored transaction with tool type, rik_messages, and direction_confirmed, not RIK's raw { code, messages, created_object_id }. If RIK stored the other direction, the draft is patched once and deleted if still wrong. If the check itself fails, the draft is kept with direction_confirmed false. Writable fields: accounts_dimensions_id, type, amount, cl_currencies_id, date (YYYY-MM-DD), and optional clients_id, description, ref_number, bank_account_name, base_amount, currency_rate, transactions_files_id, export_format. To pay a confirmed purchase invoice, use pay_purchase_invoice.",
+        "Create a bank transaction draft (PROJECT). type C is money in and type D is money out. RIK stores the opposite letter (D incoming, C outgoing); this tool translates it and checks the stored direction. The result is the stored transaction with tool type, rik_messages, and direction_confirmed, not RIK's raw { code, messages, created_object_id }. If RIK stored the other direction, the draft is patched once and deleted if still wrong. If the row is not in that day's lists, or the check itself fails, the draft is kept with direction_confirmed false. Writable fields: accounts_dimensions_id, type, amount, cl_currencies_id, date (YYYY-MM-DD), and optional clients_id, description, ref_number, bank_account_name, base_amount, currency_rate, transactions_files_id, export_format. To pay a confirmed purchase invoice, use pay_purchase_invoice.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -406,7 +411,7 @@ export function createTransactionTools(client: EFinancialsClient) {
             type: "string",
             enum: ["C", "D"],
             description:
-              "C = money in, D = money out. RIK stores the opposite letter; the returned type is the direction you asked for after the stored direction is checked.",
+              "C = money in, D = money out. RIK stores the opposite letter; the returned type is the direction you asked for. direction_confirmed is false when that day's lists do not show the row.",
           },
           amount: { type: "number", description: "Transaction amount" },
           cl_currencies_id: {
