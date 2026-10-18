@@ -119,15 +119,15 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 
 ### Transactions
 
-RIK's GET returns `type: "C"` for every transaction, whichever direction it was saved with. The tools read the stored direction from the list's `type` filter instead, which returns only the incoming rows (it ignores the letter you pass).
+RIK's GET returns `type: "C"` for every transaction, whichever direction it was saved with. The tools read the stored direction from that day's lists. A row in the `type` filter (it ignores the letter and returns only incoming rows) is money in. A row that is only in the unfiltered list is money out. A row in neither list, or one with no valid date, has an unknown direction: reads return `type: null`, and a create is kept with `direction_confirmed: false`.
 
 | Tool | Description |
 |------|-------------|
 | `list_transactions` | List bank transactions with filters (status, dates, type, client, page). `type` is `C` money in, `D` money out, read from the stored direction. |
-| `get_transaction` | Single transaction by ID (may include read-only `items[]` relation rows). `type` is the stored direction (`C` money in, `D` money out). |
+| `get_transaction` | Single transaction by ID (may include read-only `items[]` relation rows). `type` is the stored direction (`C` money in, `D` money out), or null when it is unknown (`direction_confirmed: false`). |
 | `get_unprocessed_transactions` | `PROJECT` transactions with no client. |
-| `update_transaction` | PATCH draft metadata (`clients_id`, `accounts_id`, `description`) and optional direction (`type`), which is checked against the stored direction. Not distribution rows. |
-| `create_transaction` | POST new draft (`PROJECT`). `C` is money in and `D` is money out; the RIK letter is translated and the stored direction is checked. |
+| `update_transaction` | PATCH draft metadata (`clients_id`, `accounts_id`, `description`) and optional direction (`type`), which is checked against the stored direction. Unknown direction leaves the update in place with `direction_confirmed` false. Not distribution rows. |
+| `create_transaction` | POST new draft (`PROJECT`). `C` is money in and `D` is money out; the RIK letter is translated and the stored direction is checked. Unknown direction keeps the draft with `direction_confirmed` false. |
 | `pay_purchase_invoice` | Pay a CONFIRMED purchase invoice from a cash or bank dimension (outgoing type `D`) and register it. Refuses a likely duplicate unless `allow_duplicate`; an unconfirmed save is kept as an unregistered draft. |
 | `delete_transaction` | DELETE transaction. |
 | `register_transaction` | Confirm with full `distributions[]` (`accounts` / `purchase_invoices` / `sale_invoices`). UI equivalent of Add a row + Save and confirm. |
