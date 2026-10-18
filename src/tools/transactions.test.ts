@@ -36,9 +36,11 @@ describe("transaction tools", () => {
         page: 2,
         start_date: "2025-01-01",
         end_date: "2025-01-31",
-        type: "C",
+        type: "D",
       }),
     );
+    const listed = parseToolJson(result) as { items: Array<{ type?: string }> };
+    expect(listed.items[0]?.type).toBe("C");
 
     const data = parseToolJson(result) as {
       items: unknown[];
@@ -59,7 +61,7 @@ describe("transaction tools", () => {
   });
 
   it("list_transactions uses defaults when response omits pagination", async () => {
-    vi.mocked(client.get).mockResolvedValue({ ...transactionsFixture.list_empty } as never);
+    vi.mocked(client.get).mockResolvedValue({ items: [{ id: 1, type: "C" }] } as never);
 
     const result = await tools.list_transactions.handler({});
     const data = parseToolJson(result) as {
@@ -67,7 +69,7 @@ describe("transaction tools", () => {
       current_page: number;
       total_pages: number;
     };
-    expect(data.items).toEqual([]);
+    expect(data.items).toEqual([{ id: 1, type: "C" }]);
     expect(data.current_page).toBe(1);
     expect(data.total_pages).toBe(1);
   });
@@ -137,7 +139,7 @@ describe("transaction tools", () => {
       "/v1/transactions",
       expect.objectContaining({
         status: "PROJECT",
-        type: "C",
+        type: "D",
         start_date: "2025-01-01",
       }),
     );
@@ -152,11 +154,13 @@ describe("transaction tools", () => {
     const result = await tools.update_transaction.handler({
       id: 7,
       clients_id: 99,
+      accounts_id: 12,
       description: "Updated",
     });
 
     expect(client.patch).toHaveBeenCalledWith("/v1/transactions/7", {
       clients_id: 99,
+      accounts_id: 12,
       description: "Updated",
     });
     const data = parseToolJson(result) as { success: boolean; message: string };
@@ -164,8 +168,12 @@ describe("transaction tools", () => {
     expect(data.message).toBe("Transaction 7 updated");
   });
 
-  it("create_transaction posts required and optional writable fields", async () => {
-    vi.mocked(client.post).mockResolvedValue({ ...transactionsFixture.http_post_created } as never);
+  it("create_transaction posts money-out as RIK type C and returns type D", async () => {
+    vi.mocked(client.post).mockResolvedValue({
+      id: 1,
+      messages: ["Outgoing payment has been saved."],
+    } as never);
+    vi.mocked(client.get).mockResolvedValue({ id: 1, type: "C", status: "PROJECT" } as never);
 
     const result = await tools.create_transaction.handler({
       accounts_dimensions_id: 4,
@@ -179,18 +187,27 @@ describe("transaction tools", () => {
 
     expect(client.post).toHaveBeenCalledWith("/v1/transactions", {
       accounts_dimensions_id: 4,
-      type: "D",
+      type: "C",
       amount: 100,
       cl_currencies_id: "EUR",
       date: "2025-03-01",
       description: "Manual",
       clients_id: 19,
     });
-    expect(parseToolJson(result)).toEqual({ id: 1 });
+    expect(client.patch).not.toHaveBeenCalled();
+    expect(parseToolJson(result)).toMatchObject({
+      id: 1,
+      type: "D",
+      rik_messages: ["Outgoing payment has been saved."],
+    });
   });
 
-  it("create_transaction omits undefined optional fields", async () => {
-    vi.mocked(client.post).mockResolvedValue({ response_code: 0, id: 2 } as never);
+  it("create_transaction posts money-in as RIK type D", async () => {
+    vi.mocked(client.post).mockResolvedValue({
+      id: 2,
+      messages: ["Incoming payment has been saved."],
+    } as never);
+    vi.mocked(client.get).mockResolvedValue({ id: 2, type: "C", status: "PROJECT" } as never);
 
     await tools.create_transaction.handler({
       accounts_dimensions_id: 1,
@@ -202,7 +219,7 @@ describe("transaction tools", () => {
 
     expect(client.post).toHaveBeenCalledWith("/v1/transactions", {
       accounts_dimensions_id: 1,
-      type: "C",
+      type: "D",
       amount: 50,
       cl_currencies_id: "EUR",
       date: "2025-03-02",
@@ -210,7 +227,11 @@ describe("transaction tools", () => {
   });
 
   it("create_transaction forwards remaining optional OpenAPI fields", async () => {
-    vi.mocked(client.post).mockResolvedValue({ id: 3 } as never);
+    vi.mocked(client.post).mockResolvedValue({
+      id: 3,
+      messages: ["Outgoing payment has been saved."],
+    } as never);
+    vi.mocked(client.get).mockResolvedValue({ id: 3, type: "C", status: "PROJECT" } as never);
 
     await tools.create_transaction.handler({
       accounts_dimensions_id: 2,
@@ -228,7 +249,7 @@ describe("transaction tools", () => {
 
     expect(client.post).toHaveBeenCalledWith("/v1/transactions", {
       accounts_dimensions_id: 2,
-      type: "D",
+      type: "C",
       amount: 10,
       cl_currencies_id: "EUR",
       date: "2025-03-03",
@@ -365,5 +386,346 @@ describe("transaction tools", () => {
     vi.mocked(client.get).mockRejectedValue(new Error("API Error 404: Not found"));
 
     await expect(tools.list_transactions.handler({})).rejects.toThrow("404");
+  });
+
+  it("update_transaction sets direction when RIK confirms it", async () => {
+    vi.mocked(client.patch).mockResolvedValue({
+      messages: ["Outgoing payment has been saved."],
+    } as never);
+
+    const result = await tools.update_transaction.handler({ id: 7, type: "D" });
+
+    expect(client.patch).toHaveBeenCalledWith("/v1/transactions/7", { type: "C" });
+    expect(parseToolJson(result)).toMatchObject({
+      success: true,
+      type: "D",
+      rik_messages: ["Outgoing payment has been saved."],
+    });
+  });
+
+  it("update_transaction rejects a direction RIK does not confirm", async () => {
+    vi.mocked(client.patch).mockResolvedValue({
+      messages: ["Incoming payment has been saved."],
+    } as never);
+
+    await expect(tools.update_transaction.handler({ id: 7, type: "D" })).rejects.toThrow(
+      /did not confirm type D/,
+    );
+
+    vi.mocked(client.patch).mockResolvedValue({} as never);
+    await expect(tools.update_transaction.handler({ id: 7, type: "C" })).rejects.toThrow(
+      /no message/,
+    );
+  });
+
+  it("pay_purchase_invoice creates an outgoing payment and registers it", async () => {
+    vi.mocked(client.get)
+      .mockResolvedValueOnce({
+        id: 10,
+        number: "1245",
+        status: "CONFIRMED",
+        payment_status: "NOT_PAID",
+        gross_price: 37.2,
+        clients_id: 19,
+        cl_currencies_id: "EUR",
+      } as never)
+      .mockResolvedValueOnce({ id: 77, type: "C", status: "PROJECT" } as never)
+      .mockResolvedValueOnce({ id: 10, payment_status: "PAID" } as never);
+    vi.mocked(client.post).mockResolvedValue({
+      id: 77,
+      messages: ["Outgoing payment has been saved."],
+    } as never);
+    vi.mocked(client.patch).mockResolvedValue({
+      messages: ["Outgoing payment has been confirmed."],
+    } as never);
+
+    const result = await tools.pay_purchase_invoice.handler({
+      purchase_invoices_id: 10,
+      accounts_dimensions_id: 41442,
+      date: "2026-10-01",
+    });
+
+    expect(client.post).toHaveBeenCalledWith(
+      "/v1/transactions",
+      expect.objectContaining({
+        type: "C",
+        amount: 37.2,
+        clients_id: 19,
+        description: "Ostuarve nr 1245 tasumine",
+      }),
+    );
+    expect(client.patch).toHaveBeenCalledWith("/v1/transactions/77/register", [
+      { related_table: "purchase_invoices", related_id: 10, amount: 37.2 },
+    ]);
+    expect(parseToolJson(result)).toMatchObject({
+      transaction_id: 77,
+      type: "D",
+      amount: 37.2,
+      payment_status: "PAID",
+    });
+  });
+
+  it("pay_purchase_invoice uses an explicit amount, description, and invoice_no", async () => {
+    vi.mocked(client.get)
+      .mockResolvedValueOnce({
+        id: 10,
+        status: "CONFIRMED",
+        payment_status: "PARTIALLY_PAID",
+        gross_price: 37.2,
+        clients_id: 19,
+        invoice_no: "F-9",
+      } as never)
+      .mockResolvedValueOnce({ id: 77, type: "C", status: "PROJECT" } as never)
+      .mockResolvedValueOnce({ id: 10, payment_status: null } as never);
+    vi.mocked(client.post).mockResolvedValue({
+      id: 77,
+      messages: ["Outgoing payment has been saved."],
+    } as never);
+    vi.mocked(client.patch).mockResolvedValue({} as never);
+
+    const result = await tools.pay_purchase_invoice.handler({
+      purchase_invoices_id: 10,
+      accounts_dimensions_id: 1,
+      date: "2026-10-02",
+      amount: 5,
+      description: "Paid from 1360",
+    });
+
+    expect(client.post).toHaveBeenCalledWith(
+      "/v1/transactions",
+      expect.objectContaining({
+        amount: 5,
+        cl_currencies_id: "EUR",
+        description: "Paid from 1360",
+      }),
+    );
+    expect(parseToolJson(result)).toMatchObject({ amount: 5, payment_status: null });
+  });
+
+  it("pay_purchase_invoice treats a blank payment status as unpaid and falls back to the id", async () => {
+    vi.mocked(client.get)
+      .mockResolvedValueOnce({
+        id: 10,
+        status: "CONFIRMED",
+        payment_status: "",
+        gross_price: 4,
+        clients_id: 3,
+        cl_currencies_id: "EUR",
+      } as never)
+      .mockResolvedValueOnce({ id: 77, type: "C", status: "PROJECT" } as never)
+      .mockResolvedValueOnce({ id: 10, payment_status: "PARTIALLY_PAID" } as never);
+    vi.mocked(client.post).mockResolvedValue({
+      id: 77,
+      messages: ["Väljaminev makse on salvestatud."],
+    } as never);
+    vi.mocked(client.patch).mockResolvedValue({} as never);
+
+    await tools.pay_purchase_invoice.handler({
+      purchase_invoices_id: 10,
+      accounts_dimensions_id: 1,
+      date: "2026-10-02",
+    });
+
+    expect(client.post).toHaveBeenCalledWith(
+      "/v1/transactions",
+      expect.objectContaining({ description: "Ostuarve nr 10 tasumine", amount: 4 }),
+    );
+  });
+
+  it("pay_purchase_invoice treats a null payment status as unpaid", async () => {
+    vi.mocked(client.get)
+      .mockResolvedValueOnce({
+        id: 11,
+        status: "CONFIRMED",
+        payment_status: null,
+        gross_price: 8,
+        clients_id: 3,
+        cl_currencies_id: "EUR",
+        number: "55",
+      } as never)
+      .mockResolvedValueOnce({ id: 78, type: "C", status: "PROJECT" } as never)
+      .mockResolvedValueOnce({ id: 11, payment_status: "PAID" } as never);
+    vi.mocked(client.post).mockResolvedValue({
+      id: 78,
+      messages: ["Outgoing payment has been saved."],
+    } as never);
+    vi.mocked(client.patch).mockResolvedValue({} as never);
+
+    await tools.pay_purchase_invoice.handler({
+      purchase_invoices_id: 11,
+      accounts_dimensions_id: 1,
+      date: "2026-10-02",
+    });
+    expect(client.post).toHaveBeenCalledWith(
+      "/v1/transactions",
+      expect.objectContaining({ amount: 8 }),
+    );
+  });
+
+  it("pay_purchase_invoice rejects drafts, paid invoices, and missing amounts", async () => {
+    vi.mocked(client.get).mockResolvedValueOnce({ id: 10, status: "PROJECT" } as never);
+    await expect(
+      tools.pay_purchase_invoice.handler({
+        purchase_invoices_id: 10,
+        accounts_dimensions_id: 1,
+        date: "2026-10-01",
+      }),
+    ).rejects.toThrow(/only CONFIRMED/);
+
+    vi.mocked(client.get).mockResolvedValueOnce({ id: 10, status: undefined } as never);
+    await expect(
+      tools.pay_purchase_invoice.handler({
+        purchase_invoices_id: 10,
+        accounts_dimensions_id: 1,
+        date: "2026-10-01",
+      }),
+    ).rejects.toThrow(/unknown/);
+
+    vi.mocked(client.get).mockResolvedValueOnce({
+      id: 10,
+      status: "CONFIRMED",
+      payment_status: "PAID",
+    } as never);
+    await expect(
+      tools.pay_purchase_invoice.handler({
+        purchase_invoices_id: 10,
+        accounts_dimensions_id: 1,
+        date: "2026-10-01",
+      }),
+    ).rejects.toThrow(/already paid/);
+
+    vi.mocked(client.get).mockResolvedValueOnce({
+      id: 10,
+      status: "CONFIRMED",
+      payment_status: "PARTIALLY_PAID",
+      gross_price: 10,
+      clients_id: 1,
+    } as never);
+    await expect(
+      tools.pay_purchase_invoice.handler({
+        purchase_invoices_id: 10,
+        accounts_dimensions_id: 1,
+        date: "2026-10-01",
+      }),
+    ).rejects.toThrow(/PARTIALLY_PAID/);
+
+    vi.mocked(client.get).mockResolvedValueOnce({
+      id: 10,
+      status: "CONFIRMED",
+      payment_status: "NOT_PAID",
+      gross_price: 10,
+      clients_id: 1,
+    } as never);
+    await expect(
+      tools.pay_purchase_invoice.handler({
+        purchase_invoices_id: 10,
+        accounts_dimensions_id: 1,
+        date: "2026-10-01",
+        amount: 0,
+      }),
+    ).rejects.toThrow(/greater than 0/);
+
+    vi.mocked(client.get).mockResolvedValueOnce({
+      id: 10,
+      status: "CONFIRMED",
+      payment_status: "NOT_PAID",
+      gross_price: null,
+      clients_id: 1,
+    } as never);
+    await expect(
+      tools.pay_purchase_invoice.handler({
+        purchase_invoices_id: 10,
+        accounts_dimensions_id: 1,
+        date: "2026-10-01",
+      }),
+    ).rejects.toThrow(/no positive gross price/);
+
+    vi.mocked(client.get).mockResolvedValueOnce({
+      id: 10,
+      status: "CONFIRMED",
+      payment_status: "NOT_PAID",
+      gross_price: 0,
+      clients_id: 1,
+    } as never);
+    await expect(
+      tools.pay_purchase_invoice.handler({
+        purchase_invoices_id: 10,
+        accounts_dimensions_id: 1,
+        date: "2026-10-01",
+      }),
+    ).rejects.toThrow(/no positive gross price/);
+
+    vi.mocked(client.get).mockResolvedValueOnce({
+      id: 10,
+      status: "CONFIRMED",
+      payment_status: "NOT_PAID",
+      gross_price: 10,
+      clients_id: 0,
+    } as never);
+    await expect(
+      tools.pay_purchase_invoice.handler({
+        purchase_invoices_id: 10,
+        accounts_dimensions_id: 1,
+        date: "2026-10-01",
+      }),
+    ).rejects.toThrow(/no supplier/);
+    expect(client.post).not.toHaveBeenCalled();
+  });
+
+  it("pay_purchase_invoice deletes the draft when register fails", async () => {
+    vi.mocked(client.get)
+      .mockResolvedValueOnce({
+        id: 10,
+        number: "1",
+        status: "CONFIRMED",
+        payment_status: "NOT_PAID",
+        gross_price: 3,
+        clients_id: 4,
+        cl_currencies_id: "EUR",
+      } as never)
+      .mockResolvedValueOnce({ id: 77, type: "C", status: "PROJECT" } as never);
+    vi.mocked(client.post).mockResolvedValue({
+      id: 77,
+      messages: ["Outgoing payment has been saved."],
+    } as never);
+    vi.mocked(client.patch).mockRejectedValue(new Error("register no"));
+    vi.mocked(client.delete).mockResolvedValue({} as never);
+
+    await expect(
+      tools.pay_purchase_invoice.handler({
+        purchase_invoices_id: 10,
+        accounts_dimensions_id: 1,
+        date: "2026-10-01",
+      }),
+    ).rejects.toThrow("register no");
+    expect(client.delete).toHaveBeenCalledWith("/v1/transactions/77");
+  });
+
+  it("pay_purchase_invoice reports a failed draft delete after a failed register", async () => {
+    vi.mocked(client.get)
+      .mockResolvedValueOnce({
+        id: 10,
+        number: "1",
+        status: "CONFIRMED",
+        payment_status: "NOT_PAID",
+        gross_price: 3,
+        clients_id: 4,
+        cl_currencies_id: "EUR",
+      } as never)
+      .mockResolvedValueOnce({ id: 77, type: "C", status: "PROJECT" } as never);
+    vi.mocked(client.post).mockResolvedValue({
+      id: 77,
+      messages: ["Outgoing payment has been saved."],
+    } as never);
+    vi.mocked(client.patch).mockRejectedValue("register-string");
+    vi.mocked(client.delete).mockRejectedValue(new Error("delete no"));
+
+    await expect(
+      tools.pay_purchase_invoice.handler({
+        purchase_invoices_id: 10,
+        accounts_dimensions_id: 1,
+        date: "2026-10-01",
+      }),
+    ).rejects.toThrow(/register-string[\s\S]*delete no/);
   });
 });

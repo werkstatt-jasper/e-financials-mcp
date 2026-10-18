@@ -520,6 +520,10 @@ describe("CRUD tool handlers (integration)", () => {
       const createData = parse(createResult);
       transactionId = extractCreatedId(createData);
       expect(transactionId).toBeGreaterThan(0);
+      // RIK GET returns type C for both directions. The create result is the
+      // tool direction, checked against the save message.
+      expect(createData.type).toBe("D");
+      expect(JSON.stringify(createData.rik_messages)).toMatch(/outgoing/i);
 
       const getResult = await tools.get_transaction.handler({ id: transactionId });
       expect(parse(getResult).id).toBe(transactionId);

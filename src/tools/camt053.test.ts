@@ -235,8 +235,9 @@ describe("process_camt053", () => {
   });
 
   it("execute creates PROJECT transactions and continues after per-entry errors", async () => {
+    vi.mocked(client.get).mockResolvedValue({ id: 101, type: "C", status: "PROJECT" } as never);
     vi.mocked(client.post)
-      .mockResolvedValueOnce({ id: 101 } as never)
+      .mockResolvedValueOnce({ id: 101, messages: ["Incoming payment has been saved."] } as never)
       .mockRejectedValueOnce(new Error("boom"));
     const xml = camtXml(
       `${ntry({ amt: "1", date: "2025-06-01", ref: "A", name: "Acme OÜ" })}
@@ -262,7 +263,7 @@ describe("process_camt053", () => {
     expect(vi.mocked(client.post).mock.calls[0]?.[0]).toBe("/v1/transactions");
     const body = vi.mocked(client.post).mock.calls[0]?.[1] as Record<string, unknown>;
     expect(body.bank_ref_number).toBe("A");
-    expect(body.type).toBe("C");
+    expect(body.type).toBe("D");
   });
 
   it("skips exact duplicates and in-batch duplicates on import", async () => {
@@ -373,7 +374,11 @@ describe("process_camt053", () => {
       }
       return [] as never;
     });
-    vi.mocked(client.post).mockResolvedValue({ created_object_id: 500 } as never);
+    vi.mocked(client.get).mockResolvedValue({ id: 500, type: "C", status: "PROJECT" } as never);
+    vi.mocked(client.post).mockResolvedValue({
+      created_object_id: 500,
+      messages: ["Incoming payment has been saved."],
+    } as never);
     const xml = camtXml(ntry({ amt: "15", date: "2025-06-10", ref: "P1", desc: "Same note" }));
     const result = await tools.process_camt053.handler({
       mode: "execute",
@@ -485,11 +490,12 @@ describe("process_camt053", () => {
       accounts_dimensions_id: 9,
     });
     const data = parseToolJson(result) as {
-      results: Array<{ api_id?: number }>;
+      results: unknown[];
       errors: Array<{ message: string }>;
     };
-    expect(data.results[0]?.api_id).toBeUndefined();
-    expect(data.errors[0]?.message).toBe("fail-string");
+    expect(data.results).toHaveLength(0);
+    expect(data.errors[0]?.message).toMatch(/transaction id/);
+    expect(data.errors[1]?.message).toBe("fail-string");
   });
 
   it("creates a payload without optional bank fields when they are absent", async () => {
@@ -524,9 +530,40 @@ describe("process_camt053", () => {
       file_path: filePath(xml),
       accounts_dimensions_id: 9,
     });
-    const data = parseToolJson(result) as { results: Array<{ api_id?: number }> };
-    expect(data.results).toHaveLength(2);
-    expect(data.results[0]?.api_id).toBeUndefined();
-    expect(data.results[1]?.api_id).toBeUndefined();
+    const data = parseToolJson(result) as {
+      results: unknown[];
+      errors: Array<{ message: string }>;
+    };
+    expect(data.results).toHaveLength(0);
+    expect(data.errors).toHaveLength(2);
+    expect(data.errors[0]?.message).toMatch(/transaction id/);
+  });
+
+  it("execute reports a direction mismatch as an error and does not keep the draft", async () => {
+    vi.mocked(client.post).mockResolvedValue({
+      id: 9,
+      messages: ["Incoming payment has been saved."],
+    } as never);
+    vi.mocked(client.patch).mockResolvedValue({
+      messages: ["Incoming payment has been saved."],
+    } as never);
+    vi.mocked(client.delete).mockResolvedValue({} as never);
+    const xml = camtXml(ntry({ amt: "4", date: "2025-06-01", ref: "OUT", dir: "DBIT" }));
+    const result = await tools.process_camt053.handler({
+      mode: "execute",
+      file_path: filePath(xml),
+      accounts_dimensions_id: 9,
+    });
+    const data = parseToolJson(result) as {
+      results: unknown[];
+      errors: Array<{ message: string }>;
+      summary: { created_count: number; error_count: number };
+    };
+    expect(data.results).toHaveLength(0);
+    expect(data.summary.created_count).toBe(0);
+    expect(data.summary.error_count).toBe(1);
+    expect(data.errors[0]?.message).toMatch(/Requested type D/);
+    expect(client.delete).toHaveBeenCalledWith("/v1/transactions/9");
+    expect(vi.mocked(client.post).mock.calls[0]?.[1]).toMatchObject({ type: "C" });
   });
 });

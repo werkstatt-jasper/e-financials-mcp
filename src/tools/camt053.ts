@@ -8,6 +8,7 @@ import {
   transactionTypeFromDirection,
 } from "../banking/camt053-duplicates.js";
 import { type CamtEntry, parseCamt053 } from "../banking/camt053-parser.js";
+import { createVerifiedTransaction } from "../banking/create-verified-transaction.js";
 import { errorMessage } from "../banking/errors.js";
 import type { EFinancialsClient } from "../client.js";
 import { resolveFileInput } from "../resolve-file-input.js";
@@ -108,20 +109,6 @@ function entryPayload(entry: CamtEntry, accountsDimensionsId: number, clientsId?
     body.clients_id = clientsId;
   }
   return body;
-}
-
-function createdId(response: unknown): number | undefined {
-  if (response == null || typeof response !== "object") {
-    return undefined;
-  }
-  const rec = response as Record<string, unknown>;
-  if (typeof rec.id === "number") {
-    return rec.id;
-  }
-  if (typeof rec.created_object_id === "number") {
-    return rec.created_object_id;
-  }
-  return undefined;
 }
 
 function summaryFromEntries(entries: CamtEntry[]) {
@@ -280,15 +267,17 @@ export function createCamt053Tools(client: EFinancialsClient) {
             });
           } else {
             try {
-              const response = await client.post("/v1/transactions", body);
-              const apiId = createdId(response);
+              const created = await createVerifiedTransaction(
+                client,
+                body as Record<string, string | number> & { type: "C" | "D" },
+              );
               createdCount += 1;
               results.push({
                 status: "created",
                 date: entry.date,
                 amount: entry.amount,
                 currency: entry.currency,
-                type: transactionTypeFromDirection(entry.direction),
+                type: created.type,
                 description: entry.description,
                 stored_description: storedDescription,
                 counterparty: entry.counterparty_name,
@@ -296,14 +285,15 @@ export function createCamt053Tools(client: EFinancialsClient) {
                 ref_number: entry.reference_number,
                 clients_id: clientHit?.clients_id,
                 client_match: clientHit?.match_type,
-                api_id: apiId,
+                api_id: created.id,
+                rik_messages: created.rik_messages,
               });
               if (possibleHits.length > 0) {
                 possible.push({
                   date: entry.date,
                   amount: entry.amount,
                   bank_reference: entry.bank_reference,
-                  new_transaction_api_id: apiId,
+                  new_transaction_api_id: created.id,
                   existing_transactions: possibleHits,
                 });
               }
