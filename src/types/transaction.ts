@@ -6,7 +6,7 @@ export interface Transaction {
   bank_accounts_id: number;
   bank_ref_number: string;
   bank_subtype: string;
-  type: "C" | "D"; // C = Credit (money in), D = Debit (money out)
+  type: "C" | "D"; // Tool contract: C = money in, D = money out. RIK's wire letter is the opposite.
   bank_account_no: string | null;
   bank_account_name: string | null;
   ref_number: string | null;
@@ -35,6 +35,8 @@ export interface UpdateTransactionParams {
   clients_id?: number;
   accounts_id?: number;
   description?: string;
+  /** Tool contract: C = money in, D = money out. */
+  type?: "C" | "D";
 }
 
 /** OpenAPI `TransactionsDistribution` — one row in the register payload (`TransactionsDistributions`). */

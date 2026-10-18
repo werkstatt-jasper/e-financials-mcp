@@ -35,7 +35,7 @@ export function bankReferenceHash(normalizedRef: string): string {
   return `sha256:${sha256Hex(normalizedRef)}`;
 }
 
-/** RIK: C = money in (CAMT CRDT), D = money out (CAMT DBIT). */
+/** Tool contract: C = money in (CAMT CRDT), D = money out (CAMT DBIT). The RIK wire letter is the opposite; createVerifiedTransaction translates it. */
 export function transactionTypeFromDirection(direction: CamtDirection): "C" | "D" {
   return direction === "CRDT" ? "C" : "D";
 }

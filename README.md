@@ -99,7 +99,7 @@ The server advertises **tools**, **prompts**, and **resources** over stdio.
 
 ### Tools
 
-The server advertises **82 tools** across transactions, clients, invoices, invoice settings, products, journals, accounts, reference data, and reports. All tool results are JSON in text content blocks.
+The server advertises **100 tools** across transactions, clients, invoices, invoice settings, products, journals, accounts, reference data, and reports. All tool results are JSON in text content blocks.
 
 ### Prompts
 
@@ -124,8 +124,9 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 | `list_transactions` | List bank transactions with filters (status, dates, type, client, page). |
 | `get_transaction` | Single transaction by ID (may include read-only `items[]` relation rows). |
 | `get_unprocessed_transactions` | `PROJECT` transactions with no client. |
-| `update_transaction` | PATCH draft metadata only (`clients_id`, `accounts_id`, `description`) — not distribution rows. |
-| `create_transaction` | POST new draft (`PROJECT`). |
+| `update_transaction` | PATCH draft metadata (`clients_id`, `accounts_id`, `description`) and optional direction (`type`). Not distribution rows. |
+| `create_transaction` | POST new draft (`PROJECT`). `C` is money in and `D` is money out; the RIK letter is translated and the save message is checked. |
+| `pay_purchase_invoice` | Pay a CONFIRMED purchase invoice from a cash or bank dimension (outgoing type `D`) and register it. |
 | `delete_transaction` | DELETE transaction. |
 | `register_transaction` | Confirm with full `distributions[]` (`accounts` / `purchase_invoices` / `sale_invoices`). UI equivalent of Add a row + Save and confirm. |
 | `invalidate_transaction` | Reverse registration. |
