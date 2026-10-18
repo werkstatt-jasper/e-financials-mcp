@@ -15,6 +15,8 @@ export interface VerifiedTransaction extends Transaction {
   rik_messages: string[];
   /** False when RIK's save message did not name the requested direction. The draft is kept. */
   direction_confirmed: boolean;
+  /** Set when the draft exists but could not be read back; other fields then come from the request. */
+  read_back_error?: string;
 }
 
 function directionError(
@@ -36,6 +38,21 @@ async function deleteDraft(client: EFinancialsClient, id: number): Promise<void>
 
 function oppositeDirection(direction: TransactionDirection): TransactionDirection {
   return direction === "outgoing" ? "incoming" : "outgoing";
+}
+
+async function readBack(
+  client: EFinancialsClient,
+  id: number,
+): Promise<{ stored: Transaction } | { error: string }> {
+  try {
+    const stored = await client.get<Transaction>(`/v1/transactions/${id}`);
+    if (stored == null || typeof stored !== "object" || Array.isArray(stored)) {
+      return { error: "the response was empty" };
+    }
+    return { stored: stored as Transaction };
+  } catch (error) {
+    return { error: errorMessage(error) };
+  }
 }
 
 /**
@@ -88,15 +105,19 @@ export async function createVerifiedTransaction(
     }
   }
 
-  const stored = await client.get<Transaction>(`/v1/transactions/${id}`);
-  if (stored == null || typeof stored !== "object" || Array.isArray(stored)) {
-    throw new Error(`RIK created transaction ${id} but the read-back was empty`);
-  }
-  return {
-    ...(stored as Transaction),
+  const read = await readBack(client, id);
+  const result = {
+    ...("stored" in read ? read.stored : (body as unknown as Transaction)),
     id,
     type: toolType,
     rik_messages: messages,
     direction_confirmed: saved === direction,
   };
+  if ("error" in read) {
+    return {
+      ...result,
+      read_back_error: `Transaction ${id} was created but could not be read back: ${read.error}`,
+    };
+  }
+  return result;
 }

@@ -16,6 +16,7 @@ describe("transaction tools", () => {
   beforeEach(() => {
     delete process.env.MCP_FILE_UPLOAD_ROOT;
     client = createMockClient();
+    vi.mocked(client.getAllPages).mockResolvedValue([] as never);
     tools = createTransactionTools(client);
     vi.mocked(readFile).mockReset();
   });
@@ -463,8 +464,142 @@ describe("transaction tools", () => {
       transaction_id: 77,
       type: "D",
       amount: 37.2,
+      registered: true,
+      direction_confirmed: true,
       payment_status: "PAID",
     });
+    expect(client.getAllPages).toHaveBeenCalledWith("/v1/transactions", {
+      status: "PROJECT",
+      clients_id: 19,
+    });
+  });
+
+  it("pay_purchase_invoice keeps an unconfirmed draft without registering it", async () => {
+    vi.mocked(client.get)
+      .mockResolvedValueOnce({
+        id: 10,
+        number: "1245",
+        status: "CONFIRMED",
+        payment_status: null,
+        gross_price: 37.2,
+        clients_id: 19,
+        cl_currencies_id: "EUR",
+      } as never)
+      .mockResolvedValueOnce({ id: 79, type: "C", status: "PROJECT" } as never);
+    vi.mocked(client.post).mockResolvedValue({ id: 79, messages: ["Saved."] } as never);
+
+    const result = parseToolJson(
+      await tools.pay_purchase_invoice.handler({
+        purchase_invoices_id: 10,
+        accounts_dimensions_id: 41442,
+        date: "2026-10-01",
+      }),
+    );
+
+    expect(result).toMatchObject({
+      registered: false,
+      transaction_id: 79,
+      type: "D",
+      amount: 37.2,
+      direction_confirmed: false,
+      payment_status: "NOT_PAID",
+      rik_messages: ["Saved."],
+    });
+    expect((result as { message: string }).message).toMatch(
+      /draft 79 was not registered against purchase invoice 10/,
+    );
+    expect(client.patch).not.toHaveBeenCalled();
+    expect(client.delete).not.toHaveBeenCalled();
+  });
+
+  it("pay_purchase_invoice refuses when the supplier has a matching draft", async () => {
+    const invoice = {
+      id: 10,
+      number: "1245",
+      status: "CONFIRMED",
+      payment_status: "NOT_PAID",
+      gross_price: 37.2,
+      clients_id: 19,
+      cl_currencies_id: "EUR",
+    };
+    vi.mocked(client.get).mockResolvedValueOnce(invoice as never);
+    vi.mocked(client.getAllPages).mockResolvedValue([
+      { id: 70, status: "PROJECT", clients_id: 19, amount: 37.2, date: "2026-09-30" },
+      { id: 71, status: "PROJECT", clients_id: 19, amount: 5, date: "2026-09-30" },
+      { id: 72, status: "CONFIRMED", clients_id: 19, amount: 37.2, date: "2026-09-30" },
+      { id: 73, status: "PROJECT", clients_id: 20, amount: 37.2, date: "2026-09-30" },
+      { id: 74, status: "PROJECT", clients_id: 19, amount: "37.2", date: "2026-09-30" },
+    ] as never);
+
+    await expect(
+      tools.pay_purchase_invoice.handler({
+        purchase_invoices_id: 10,
+        accounts_dimensions_id: 41442,
+        date: "2026-10-01",
+      }),
+    ).rejects.toThrow(
+      "Possible duplicate payment for purchase invoice 10: transaction 70 (PROJECT, 2026-09-30, 37.2). Register an existing draft with register_transaction, delete it with delete_transaction, or pass allow_duplicate=true to create another payment.",
+    );
+    expect(client.post).not.toHaveBeenCalled();
+
+    vi.mocked(client.getAllPages).mockClear();
+    vi.mocked(client.get)
+      .mockResolvedValueOnce(invoice as never)
+      .mockResolvedValueOnce({ id: 80, type: "C", status: "PROJECT" } as never)
+      .mockResolvedValueOnce({ id: 10, payment_status: "PAID" } as never);
+    vi.mocked(client.post).mockResolvedValue({
+      id: 80,
+      messages: ["Outgoing payment has been saved."],
+    } as never);
+    vi.mocked(client.patch).mockResolvedValue({} as never);
+    const paid = parseToolJson(
+      await tools.pay_purchase_invoice.handler({
+        purchase_invoices_id: 10,
+        accounts_dimensions_id: 41442,
+        date: "2026-10-01",
+        allow_duplicate: true,
+      }),
+    );
+    expect(paid).toMatchObject({ transaction_id: 80, registered: true });
+    expect(client.getAllPages).not.toHaveBeenCalled();
+  });
+
+  it("pay_purchase_invoice refuses a same-day confirmed payment of the invoice", async () => {
+    vi.mocked(client.get)
+      .mockResolvedValueOnce({
+        id: 10,
+        number: "1245",
+        status: "CONFIRMED",
+        payment_status: "PARTIALLY_PAID",
+        gross_price: 37.2,
+        clients_id: 19,
+        cl_currencies_id: "EUR",
+        transactions: [60, 61, 62],
+      } as never)
+      .mockResolvedValueOnce({
+        id: 60,
+        status: "CONFIRMED",
+        date: "2026-10-02",
+        amount: 5,
+      } as never)
+      .mockResolvedValueOnce({
+        id: 61,
+        status: "CONFIRMED",
+        date: "2026-10-01",
+        amount: 5,
+      } as never)
+      .mockResolvedValueOnce({ id: 62, status: "VOID", date: "2026-10-02", amount: 5 } as never);
+
+    await expect(
+      tools.pay_purchase_invoice.handler({
+        purchase_invoices_id: 10,
+        accounts_dimensions_id: 41442,
+        date: "2026-10-02",
+        amount: 5,
+      }),
+    ).rejects.toThrow(/transaction 60 \(CONFIRMED, 2026-10-02, 5\)\./);
+    expect(client.get).toHaveBeenCalledWith("/v1/transactions/62");
+    expect(client.post).not.toHaveBeenCalled();
   });
 
   it("pay_purchase_invoice uses an explicit amount, description, and invoice_no", async () => {

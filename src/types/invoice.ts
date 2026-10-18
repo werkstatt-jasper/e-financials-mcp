@@ -58,6 +58,8 @@ export interface PurchaseInvoice {
   cl_currencies_id: string;
   status: "PROJECT" | "CONFIRMED" | "VOID";
   payment_status: "NOT_PAID" | "PARTIALLY_PAID" | "PAID" | null;
+  /** Related transaction ids; only on a single-invoice GET. */
+  transactions?: number[] | null;
   // Legacy aliases (not returned by the live API)
   invoice_no?: string;
   supplier_name?: string;

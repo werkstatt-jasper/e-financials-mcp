@@ -252,13 +252,19 @@ describe("process_camt053", () => {
       mode: string;
       results: Array<{ status: string; api_id?: number; type: string }>;
       errors: Array<{ message: string }>;
-      summary: { created_count: number; error_count: number };
+      summary: { created_count: number; error_count: number; direction_unconfirmed_count: number };
     };
     expect(data.mode).toBe("EXECUTED");
-    expect(data.results[0]).toMatchObject({ status: "created", api_id: 101, type: "C" });
+    expect(data.results[0]).toMatchObject({
+      status: "created",
+      api_id: 101,
+      type: "C",
+      direction_confirmed: true,
+    });
     expect(data.errors[0]?.message).toBe("boom");
     expect(data.summary.created_count).toBe(1);
     expect(data.summary.error_count).toBe(1);
+    expect(data.summary.direction_unconfirmed_count).toBe(0);
     expect(client.post).toHaveBeenCalledTimes(2);
     expect(vi.mocked(client.post).mock.calls[0]?.[0]).toBe("/v1/transactions");
     const body = vi.mocked(client.post).mock.calls[0]?.[1] as Record<string, unknown>;
@@ -389,6 +395,30 @@ describe("process_camt053", () => {
       possible_duplicates: Array<{ new_transaction_api_id?: number }>;
     };
     expect(data.possible_duplicates[0]?.new_transaction_api_id).toBe(500);
+  });
+
+  it("execute flags rows whose save message does not confirm the direction", async () => {
+    vi.mocked(client.get).mockResolvedValue({ id: 102, type: "C", status: "PROJECT" } as never);
+    vi.mocked(client.post).mockResolvedValue({ id: 102, messages: ["Saved."] } as never);
+    const xml = camtXml(ntry({ amt: "3", date: "2025-06-03", ref: "U1", dir: "DBIT" }));
+    const result = await tools.process_camt053.handler({
+      mode: "execute",
+      file_path: filePath(xml),
+      accounts_dimensions_id: 9,
+    });
+    const data = parseToolJson(result) as {
+      results: Array<{ status: string; api_id?: number; direction_confirmed?: boolean }>;
+      summary: { created_count: number; direction_unconfirmed_count: number };
+    };
+    expect(data.results[0]).toMatchObject({
+      status: "created",
+      api_id: 102,
+      type: "D",
+      direction_confirmed: false,
+    });
+    expect(data.summary.created_count).toBe(1);
+    expect(data.summary.direction_unconfirmed_count).toBe(1);
+    expect(client.delete).not.toHaveBeenCalled();
   });
 
   it("filters parse mode by date_from/date_to", async () => {

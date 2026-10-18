@@ -13,7 +13,7 @@ export type ToolTransactionType = "C" | "D";
 export type TransactionDirection = "incoming" | "outgoing";
 export type SavedDirection = TransactionDirection | "unknown";
 
-const OUTGOING_MESSAGE = /outgoing|väljaminev|väljuv|tasumine|väljamakse/i;
+const OUTGOING_MESSAGE = /outgoing|väljaminev|väljuv|väljamakse/i;
 const INCOMING_MESSAGE = /incoming|sissetulev|laekuv|laekumine|laekunud/i;
 
 /** RIK letter to send for a tool type. */

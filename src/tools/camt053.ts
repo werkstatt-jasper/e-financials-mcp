@@ -131,7 +131,7 @@ export function createCamt053Tools(client: EFinancialsClient) {
   return {
     process_camt053: {
       description:
-        "Import an ISO 20022 CAMT.053 bank statement (LHV, Swedbank, SEB, Coop, Luminor). Modes: parse (read-only), dry_run (default for import; no writes), execute (create PROJECT transactions). file_path is a filesystem path or base64:/base64:xml: payload. dry_run/execute require accounts_dimensions_id. Duplicate detection uses bank reference (and a description marker when the API drops dedicated fields). Pro-tier batch write.",
+        "Import an ISO 20022 CAMT.053 bank statement (LHV, Swedbank, SEB, Coop, Luminor). Modes: parse (read-only), dry_run (default for import; no writes), execute (create PROJECT transactions). file_path is a filesystem path or base64:/base64:xml: payload. dry_run/execute require accounts_dimensions_id. Duplicate detection uses bank reference (and a description marker when the API drops dedicated fields). Each created row carries direction_confirmed; rows where RIK's save message did not confirm the direction are kept and counted in summary.direction_unconfirmed_count, so check them before registering. Pro-tier batch write.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -218,6 +218,7 @@ export function createCamt053Tools(client: EFinancialsClient) {
         let createdCount = 0;
         let skippedCount = 0;
         let errorCount = 0;
+        let unconfirmedCount = 0;
 
         for (const entry of eligible) {
           const batchKey = entryBatchKey(entry);
@@ -290,7 +291,12 @@ export function createCamt053Tools(client: EFinancialsClient) {
                 client_match: clientHit?.match_type,
                 api_id: created.id,
                 rik_messages: created.rik_messages,
+                direction_confirmed: created.direction_confirmed,
+                read_back_error: created.read_back_error,
               });
+              if (!created.direction_confirmed) {
+                unconfirmedCount += 1;
+              }
               if (possibleHits.length > 0) {
                 possible.push({
                   date: entry.date,
@@ -331,6 +337,7 @@ export function createCamt053Tools(client: EFinancialsClient) {
             created_count: createdCount,
             skipped_count: skippedCount,
             error_count: errorCount,
+            direction_unconfirmed_count: unconfirmedCount,
             possible_duplicate_count: possible.length,
           },
           results,

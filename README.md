@@ -126,7 +126,7 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 | `get_unprocessed_transactions` | `PROJECT` transactions with no client. |
 | `update_transaction` | PATCH draft metadata (`clients_id`, `accounts_id`, `description`) and optional direction (`type`). Not distribution rows. |
 | `create_transaction` | POST new draft (`PROJECT`). `C` is money in and `D` is money out; the RIK letter is translated and the save message is checked. |
-| `pay_purchase_invoice` | Pay a CONFIRMED purchase invoice from a cash or bank dimension (outgoing type `D`) and register it. |
+| `pay_purchase_invoice` | Pay a CONFIRMED purchase invoice from a cash or bank dimension (outgoing type `D`) and register it. Refuses a likely duplicate unless `allow_duplicate`; an unconfirmed save is kept as an unregistered draft. |
 | `delete_transaction` | DELETE transaction. |
 | `register_transaction` | Confirm with full `distributions[]` (`accounts` / `purchase_invoices` / `sale_invoices`). UI equivalent of Add a row + Save and confirm. |
 | `invalidate_transaction` | Reverse registration. |
@@ -270,7 +270,7 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 | `analyze_unconfirmed_transactions` | Read-only suggestions for PROJECT bank txs (duplicates, transfers, invoice matches, fees). |
 | `reconcile_bank_transactions` | Modes: `match`, `auto_confirm`, `transfers` (dry-run by default; `execute: true` to mutate). |
 | `classify_bank_transactions` | Modes: `classify`, `dry_run_apply`, `execute_apply` for unmatched counterparty groups. |
-| `process_camt053` | Import CAMT.053 statements (`parse` / `dry_run` / `execute`). File path or base64 XML. |
+| `process_camt053` | Import CAMT.053 statements (`parse` / `dry_run` / `execute`). File path or base64 XML. Created rows report `direction_confirmed`. |
 
 ## Upstream API documentation
 
