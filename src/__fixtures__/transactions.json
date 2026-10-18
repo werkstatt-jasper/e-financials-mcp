@@ -5,7 +5,7 @@
     "total_pages": 5
   },
   "list_empty": { "items": [] },
-  "single": { "id": 42, "description": "Wire" },
+  "single": { "id": 42, "description": "Wire", "type": "C", "date": "2026-10-01" },
   "patch_result": { "id": 7 },
   "pagination_page_1": {
     "items": [{ "id": "a" }],
@@ -37,7 +37,7 @@
     "items": [
       {
         "id": 1,
-        "type": "D",
+        "type": "C",
         "amount": 100,
         "status": "PROJECT",
         "clients_id": null,
@@ -63,7 +63,7 @@
         "id": 2,
         "clients_id": 5,
         "status": "PROJECT",
-        "type": "D",
+        "type": "C",
         "amount": 2,
         "description": "b"
       }
@@ -74,7 +74,7 @@
     "items": [
       {
         "id": 1,
-        "type": "D",
+        "type": "C",
         "amount": 100,
         "status": "CONFIRMED",
         "clients_id": 1,

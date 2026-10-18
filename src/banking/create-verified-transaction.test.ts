@@ -1,18 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { EFinancialsClient } from "../client.js";
+import { createMockClient } from "../tools/test-helpers.js";
 import { createVerifiedTransaction } from "./create-verified-transaction.js";
-
-function mockClient(): EFinancialsClient {
-  return {
-    get: vi.fn(),
-    post: vi.fn(),
-    patch: vi.fn(),
-    put: vi.fn(),
-    delete: vi.fn(),
-    getAllPages: vi.fn(),
-    request: vi.fn(),
-  } as unknown as EFinancialsClient;
-}
 
 const outgoingBody = {
   accounts_dimensions_id: 1,
@@ -22,13 +11,27 @@ const outgoingBody = {
   date: "2026-10-01",
 };
 
+/** Successive answers of the incoming-rows filter: ids stored as incoming, or a failure. */
+function incomingChecks(client: EFinancialsClient, ...checks: Array<number[] | Error>): void {
+  for (const check of checks) {
+    if (check instanceof Error) {
+      vi.mocked(client.getAllPages).mockRejectedValueOnce(check);
+    } else {
+      vi.mocked(client.getAllPages).mockResolvedValueOnce(
+        check.map((id) => ({ id, type: "C" })) as never,
+      );
+    }
+  }
+}
+
 describe("createVerifiedTransaction", () => {
-  it("keeps an outgoing draft when the first save message matches", async () => {
-    const client = mockClient();
+  it("keeps an outgoing draft that RIK stored as outgoing", async () => {
+    const client = createMockClient();
     vi.mocked(client.post).mockResolvedValue({
       id: 5,
       messages: ["Outgoing payment has been saved."],
     } as never);
+    incomingChecks(client, [4]);
     vi.mocked(client.get).mockResolvedValue({
       id: 5,
       type: "C",
@@ -42,22 +45,30 @@ describe("createVerifiedTransaction", () => {
       "/v1/transactions",
       expect.objectContaining({ type: "C" }),
     );
+    expect(client.getAllPages).toHaveBeenCalledWith("/v1/transactions", {
+      start_date: "2026-10-01",
+      end_date: "2026-10-01",
+      type: "D",
+    });
     expect(client.patch).not.toHaveBeenCalled();
     expect(client.delete).not.toHaveBeenCalled();
-    expect(created).toMatchObject({
+    expect(created).toEqual({
       id: 5,
       type: "D",
+      status: "PROJECT",
+      amount: 10,
       direction_confirmed: true,
       rik_messages: ["Outgoing payment has been saved."],
     });
   });
 
-  it("keeps an incoming draft from a response_message", async () => {
-    const client = mockClient();
+  it("keeps an incoming draft that RIK stored as incoming", async () => {
+    const client = createMockClient();
     vi.mocked(client.post).mockResolvedValue({
       created_object_id: 6,
       response_message: "Incoming payment has been saved.",
     } as never);
+    incomingChecks(client, [6]);
     vi.mocked(client.get).mockResolvedValue({ id: 6, type: "C", status: "PROJECT" } as never);
 
     const created = await createVerifiedTransaction(client, { ...outgoingBody, type: "C" });
@@ -66,16 +77,16 @@ describe("createVerifiedTransaction", () => {
       "/v1/transactions",
       expect.objectContaining({ type: "D" }),
     );
-    expect(created.type).toBe("C");
-    expect(created.id).toBe(6);
+    expect(created).toMatchObject({ id: 6, type: "C", direction_confirmed: true });
   });
 
-  it("accepts a correcting PATCH when the POST message is wrong", async () => {
-    const client = mockClient();
+  it("patches once when RIK stored the other direction", async () => {
+    const client = createMockClient();
     vi.mocked(client.post).mockResolvedValue({
       id: 7,
       messages: ["Incoming payment has been saved."],
     } as never);
+    incomingChecks(client, [7], []);
     vi.mocked(client.patch).mockResolvedValue({
       messages: ["Outgoing payment has been saved."],
     } as never);
@@ -89,25 +100,23 @@ describe("createVerifiedTransaction", () => {
     expect(created.direction_confirmed).toBe(true);
   });
 
-  it("keeps an unrecognized save message without patching", async () => {
-    const client = mockClient();
-    vi.mocked(client.post).mockResolvedValue({ id: 8, messages: ["nope"] } as never);
+  it("keeps the draft unconfirmed when the direction check fails", async () => {
+    const client = createMockClient();
+    vi.mocked(client.post).mockResolvedValue({ id: 8, messages: ["Saved."] } as never);
+    incomingChecks(client, new Error("HTTP 503"));
     vi.mocked(client.get).mockResolvedValue({ id: 8, type: "C", status: "PROJECT" } as never);
 
     const created = await createVerifiedTransaction(client, outgoingBody);
 
     expect(client.patch).not.toHaveBeenCalled();
     expect(client.delete).not.toHaveBeenCalled();
-    expect(created.direction_confirmed).toBe(false);
-    expect(created.type).toBe("D");
+    expect(created).toMatchObject({ id: 8, type: "D", direction_confirmed: false });
   });
 
-  it("keeps the draft when a correcting PATCH no longer names a direction", async () => {
-    const client = mockClient();
-    vi.mocked(client.post).mockResolvedValue({
-      id: 8,
-      messages: ["Incoming payment has been saved."],
-    } as never);
+  it("keeps the draft unconfirmed when the check after the PATCH fails", async () => {
+    const client = createMockClient();
+    vi.mocked(client.post).mockResolvedValue({ id: 8 } as never);
+    incomingChecks(client, [8], new Error("HTTP 503"));
     vi.mocked(client.patch).mockResolvedValue({ messages: [] } as never);
     vi.mocked(client.get).mockResolvedValue({ id: 8, type: "C", status: "PROJECT" } as never);
 
@@ -117,59 +126,52 @@ describe("createVerifiedTransaction", () => {
     expect(created.direction_confirmed).toBe(false);
   });
 
-  it("deletes the draft when POST and PATCH both name the other direction", async () => {
-    const client = mockClient();
+  it("deletes the draft when RIK still stores the other direction after the PATCH", async () => {
+    const client = createMockClient();
     vi.mocked(client.post).mockResolvedValue({
       id: 8,
       messages: ["Incoming payment has been saved."],
     } as never);
+    incomingChecks(client, [8], [8]);
     vi.mocked(client.patch).mockResolvedValue({
       messages: ["Incoming payment has been saved."],
     } as never);
     vi.mocked(client.delete).mockResolvedValue({} as never);
 
     await expect(createVerifiedTransaction(client, outgoingBody)).rejects.toThrow(
-      /Requested type D \(outgoing\).*The draft was deleted/,
+      "Requested type D (outgoing), sent API type C, but RIK stored the transaction as incoming. RIK reported: Incoming payment has been saved. The draft was deleted.",
     );
     expect(client.delete).toHaveBeenCalledWith("/v1/transactions/8");
   });
 
-  it("includes a delete failure after a wrong PATCH message", async () => {
-    const client = mockClient();
-    vi.mocked(client.post).mockResolvedValue({
-      id: 8,
-      messages: ["Incoming payment has been saved."],
-    } as never);
-    vi.mocked(client.patch).mockResolvedValue({
-      messages: ["Incoming payment has been saved."],
-    } as never);
+  it("includes a delete failure after the PATCH did not help", async () => {
+    const client = createMockClient();
+    vi.mocked(client.post).mockResolvedValue({ id: 8 } as never);
+    incomingChecks(client, [8], [8]);
+    vi.mocked(client.patch).mockResolvedValue({} as never);
     vi.mocked(client.delete).mockRejectedValue(new Error("gone"));
 
     await expect(createVerifiedTransaction(client, outgoingBody)).rejects.toThrow(
-      /Failed to delete draft transaction 8: gone/,
+      "Requested type D (outgoing), sent API type C, but RIK stored the transaction as incoming. Failed to delete draft transaction 8: gone",
     );
   });
 
   it("deletes the draft when the correcting PATCH throws", async () => {
-    const client = mockClient();
-    vi.mocked(client.post).mockResolvedValue({
-      id: 8,
-      messages: ["Incoming payment has been saved."],
-    } as never);
+    const client = createMockClient();
+    vi.mocked(client.post).mockResolvedValue({ id: 8 } as never);
+    incomingChecks(client, [8]);
     vi.mocked(client.patch).mockRejectedValue("patch-string");
     vi.mocked(client.delete).mockResolvedValue({} as never);
 
     await expect(createVerifiedTransaction(client, outgoingBody)).rejects.toThrow(
-      /PATCH failed: patch-string.*The draft was deleted/,
+      /PATCH failed: patch-string The draft was deleted\./,
     );
   });
 
-  it("reports both failures when PATCH and delete throw", async () => {
-    const client = mockClient();
-    vi.mocked(client.post).mockResolvedValue({
-      id: 8,
-      messages: ["Incoming payment has been saved."],
-    } as never);
+  it("reports both failures when the PATCH and the delete throw", async () => {
+    const client = createMockClient();
+    vi.mocked(client.post).mockResolvedValue({ id: 8 } as never);
+    incomingChecks(client, [8]);
     vi.mocked(client.patch).mockRejectedValue(new Error("patch no"));
     vi.mocked(client.delete).mockRejectedValue(new Error("delete no"));
 
@@ -179,20 +181,19 @@ describe("createVerifiedTransaction", () => {
   });
 
   it("throws when RIK returns no id", async () => {
-    const client = mockClient();
+    const client = createMockClient();
     vi.mocked(client.post).mockResolvedValue({ code: 0 } as never);
     await expect(createVerifiedTransaction(client, outgoingBody)).rejects.toThrow(/transaction id/);
     vi.mocked(client.post).mockResolvedValue(null as never);
     await expect(createVerifiedTransaction(client, outgoingBody)).rejects.toThrow(/transaction id/);
+    expect(client.getAllPages).not.toHaveBeenCalled();
     expect(client.delete).not.toHaveBeenCalled();
   });
 
   it("returns the created id when the read-back is empty", async () => {
-    const client = mockClient();
-    vi.mocked(client.post).mockResolvedValue({
-      id: 5,
-      messages: ["Outgoing payment has been saved."],
-    } as never);
+    const client = createMockClient();
+    vi.mocked(client.post).mockResolvedValue({ id: 5 } as never);
+    incomingChecks(client, [], []);
     vi.mocked(client.get).mockResolvedValue(null as never);
     const empty = await createVerifiedTransaction(client, outgoingBody);
     expect(empty).toMatchObject({
@@ -210,11 +211,9 @@ describe("createVerifiedTransaction", () => {
   });
 
   it("returns the created id when the read-back throws", async () => {
-    const client = mockClient();
-    vi.mocked(client.post).mockResolvedValue({
-      id: 5,
-      messages: ["Outgoing payment has been saved."],
-    } as never);
+    const client = createMockClient();
+    vi.mocked(client.post).mockResolvedValue({ id: 5 } as never);
+    incomingChecks(client, []);
     vi.mocked(client.get).mockRejectedValue(new Error("HTTP 503"));
     const created = await createVerifiedTransaction(client, outgoingBody);
     expect(created).toMatchObject({ id: 5, type: "D", amount: 10, direction_confirmed: true });

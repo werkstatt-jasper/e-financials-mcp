@@ -119,13 +119,15 @@ Static and templated resources use the **`efinancials://`** URI scheme.
 
 ### Transactions
 
+RIK's GET returns `type: "C"` for every transaction, whichever direction it was saved with. The tools read the stored direction from the list's `type` filter instead, which returns only the incoming rows (it ignores the letter you pass).
+
 | Tool | Description |
 |------|-------------|
-| `list_transactions` | List bank transactions with filters (status, dates, type, client, page). |
-| `get_transaction` | Single transaction by ID (may include read-only `items[]` relation rows). |
+| `list_transactions` | List bank transactions with filters (status, dates, type, client, page). `type` is `C` money in, `D` money out, read from the stored direction. |
+| `get_transaction` | Single transaction by ID (may include read-only `items[]` relation rows). `type` is the stored direction (`C` money in, `D` money out). |
 | `get_unprocessed_transactions` | `PROJECT` transactions with no client. |
-| `update_transaction` | PATCH draft metadata (`clients_id`, `accounts_id`, `description`) and optional direction (`type`). Not distribution rows. |
-| `create_transaction` | POST new draft (`PROJECT`). `C` is money in and `D` is money out; the RIK letter is translated and the save message is checked. |
+| `update_transaction` | PATCH draft metadata (`clients_id`, `accounts_id`, `description`) and optional direction (`type`), which is checked against the stored direction. Not distribution rows. |
+| `create_transaction` | POST new draft (`PROJECT`). `C` is money in and `D` is money out; the RIK letter is translated and the stored direction is checked. |
 | `pay_purchase_invoice` | Pay a CONFIRMED purchase invoice from a cash or bank dimension (outgoing type `D`) and register it. Refuses a likely duplicate unless `allow_duplicate`; an unconfirmed save is kept as an unregistered draft. |
 | `delete_transaction` | DELETE transaction. |
 | `register_transaction` | Confirm with full `distributions[]` (`accounts` / `purchase_invoices` / `sale_invoices`). UI equivalent of Add a row + Save and confirm. |

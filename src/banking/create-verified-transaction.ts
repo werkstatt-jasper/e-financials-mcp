@@ -1,11 +1,12 @@
 import type { EFinancialsClient } from "../client.js";
 import type { Transaction } from "../types/transaction.js";
 import { errorMessage } from "./errors.js";
+import { storedDirection } from "./stored-direction.js";
 import {
   directionFromToolType,
+  reportedMessages,
   rikMessages,
   rikTypeForToolType,
-  savedDirectionFromMessages,
   type ToolTransactionType,
   type TransactionDirection,
   transactionIdFromResponse,
@@ -13,10 +14,14 @@ import {
 
 export interface VerifiedTransaction extends Transaction {
   rik_messages: string[];
-  /** False when RIK's save message did not name the requested direction. The draft is kept. */
+  /** False when the stored direction could not be checked. The draft is kept. */
   direction_confirmed: boolean;
   /** Set when the draft exists but could not be read back; other fields then come from the request. */
   read_back_error?: string;
+}
+
+function oppositeDirection(direction: TransactionDirection): TransactionDirection {
+  return direction === "outgoing" ? "incoming" : "outgoing";
 }
 
 function directionError(
@@ -24,8 +29,8 @@ function directionError(
   apiType: ToolTransactionType,
   messages: string[],
 ): string {
-  const reported = messages.join("; ");
-  return `Requested type ${toolType} (${directionFromToolType(toolType)}), sent API type ${apiType}, RIK reported: ${reported}.`;
+  const stored = oppositeDirection(directionFromToolType(toolType));
+  return `Requested type ${toolType} (${directionFromToolType(toolType)}), sent API type ${apiType}, but RIK stored the transaction as ${stored}.${reportedMessages(messages)}`;
 }
 
 async function deleteDraft(client: EFinancialsClient, id: number): Promise<void> {
@@ -36,8 +41,16 @@ async function deleteDraft(client: EFinancialsClient, id: number): Promise<void>
   }
 }
 
-function oppositeDirection(direction: TransactionDirection): TransactionDirection {
-  return direction === "outgoing" ? "incoming" : "outgoing";
+async function checkDirection(
+  client: EFinancialsClient,
+  id: number,
+  date: string,
+): Promise<TransactionDirection | undefined> {
+  try {
+    return await storedDirection(client, id, date);
+  } catch {
+    return undefined;
+  }
 }
 
 async function readBack(
@@ -57,8 +70,8 @@ async function readBack(
 
 /**
  * Create a PROJECT transaction. The wire `type` is the opposite of the tool
- * contract. A save message that names the other direction is patched once and
- * then the draft is deleted. An empty or unrecognized message keeps the draft
+ * contract. When RIK stored the other direction, the draft is patched once and
+ * then deleted. When the stored direction cannot be checked, the draft is kept
  * with `direction_confirmed: false`.
  */
 export async function createVerifiedTransaction(
@@ -74,13 +87,13 @@ export async function createVerifiedTransaction(
     throw new Error("RIK did not return a transaction id");
   }
 
+  const date = String(body.date);
   let messages = rikMessages(posted);
-  let saved = savedDirectionFromMessages(messages);
-  if (saved === oppositeDirection(direction)) {
+  let stored = await checkDirection(client, id, date);
+  if (stored === oppositeDirection(direction)) {
     try {
       const patched = await client.patch(`/v1/transactions/${id}`, { type: apiType });
       messages = rikMessages(patched);
-      saved = savedDirectionFromMessages(messages);
     } catch (error) {
       try {
         await deleteDraft(client, id);
@@ -93,7 +106,8 @@ export async function createVerifiedTransaction(
         `${directionError(toolType, apiType, messages)} PATCH failed: ${errorMessage(error)} The draft was deleted.`,
       );
     }
-    if (saved === oppositeDirection(direction)) {
+    stored = await checkDirection(client, id, date);
+    if (stored === oppositeDirection(direction)) {
       try {
         await deleteDraft(client, id);
       } catch (deleteError) {
@@ -111,7 +125,7 @@ export async function createVerifiedTransaction(
     id,
     type: toolType,
     rik_messages: messages,
-    direction_confirmed: saved === direction,
+    direction_confirmed: stored === direction,
   };
   if ("error" in read) {
     return {

@@ -488,45 +488,60 @@ describe("CRUD tool handlers (integration)", () => {
   // ── Transaction Lifecycle ──────────────────────────────────────────
 
   describe("transaction lifecycle", () => {
-    let transactionId: number;
+    const transactionIds = new Set<number>();
 
     afterAll(async () => {
-      if (!transactionId) return;
-      try {
-        await tools.invalidate_transaction.handler({ id: transactionId });
-      } catch {
-        /* may not be registered */
-      }
-      try {
-        await tools.delete_transaction.handler({ id: transactionId });
-      } catch {
-        /* best-effort */
+      for (const id of transactionIds) {
+        try {
+          await tools.invalidate_transaction.handler({ id });
+        } catch {
+          /* may not be registered */
+        }
+        try {
+          await tools.delete_transaction.handler({ id });
+        } catch {
+          /* best-effort */
+        }
       }
     });
 
-    it("create draft -> get -> update -> delete", async () => {
+    async function createDraft(type: "C" | "D", amount: number) {
       const dimResult = await tools.list_account_dimensions.handler({});
       const dimData = parse(dimResult) as { dimensions: Array<{ id: number }> };
       expect(dimData.dimensions.length).toBeGreaterThan(0);
 
-      const createResult = await tools.create_transaction.handler({
-        accounts_dimensions_id: dimData.dimensions[0].id,
-        type: "D",
-        amount: 25.5,
-        cl_currencies_id: "EUR",
-        date: "2025-06-15",
-        description: `${TEST_PREFIX} Transaction ${timestamp}`,
-      });
-      const createData = parse(createResult);
-      transactionId = extractCreatedId(createData);
-      expect(transactionId).toBeGreaterThan(0);
-      // RIK GET returns type C for both directions. The create result is the
-      // tool direction, checked against the save message.
-      expect(createData.type).toBe("D");
-      expect(JSON.stringify(createData.rik_messages)).toMatch(/outgoing/i);
+      const createData = parse(
+        await tools.create_transaction.handler({
+          accounts_dimensions_id: dimData.dimensions[0].id,
+          type,
+          amount,
+          cl_currencies_id: "EUR",
+          date: "2025-06-15",
+          description: `${TEST_PREFIX} Transaction ${type} ${timestamp}`,
+        }),
+      );
+      const id = extractCreatedId(createData);
+      expect(id).toBeGreaterThan(0);
+      transactionIds.add(id);
+      // RIK GET returns type C for both directions; the stored direction comes
+      // from the list's type filter, which returns only incoming rows.
+      expect(createData.type).toBe(type);
+      expect(createData.direction_confirmed).toBe(true);
+      return id;
+    }
 
-      const getResult = await tools.get_transaction.handler({ id: transactionId });
-      expect(parse(getResult).id).toBe(transactionId);
+    async function deleteDraft(id: number) {
+      const deleteResult = await tools.delete_transaction.handler({ id });
+      expect(parse(deleteResult)).toBeDefined();
+      transactionIds.delete(id);
+    }
+
+    it("create draft -> get -> update -> delete", async () => {
+      const transactionId = await createDraft("D", 25.5);
+
+      const getData = parse(await tools.get_transaction.handler({ id: transactionId }));
+      expect(getData.id).toBe(transactionId);
+      expect(getData.type).toBe("D");
 
       const updateResult = await tools.update_transaction.handler({
         id: transactionId,
@@ -534,9 +549,25 @@ describe("CRUD tool handlers (integration)", () => {
       });
       expect(parse(updateResult).success).toBe(true);
 
-      const deleteResult = await tools.delete_transaction.handler({ id: transactionId });
-      expect(parse(deleteResult)).toBeDefined();
-      transactionId = 0;
+      await deleteDraft(transactionId);
+    });
+
+    it("stores money in as incoming and lists it under type C only", async () => {
+      const transactionId = await createDraft("C", 12.5);
+
+      expect(parse(await tools.get_transaction.handler({ id: transactionId })).type).toBe("C");
+
+      const day = { start_date: "2025-06-15", end_date: "2025-06-15" };
+      const listIds = async (type: "C" | "D") =>
+        (
+          parse(await tools.list_transactions.handler({ ...day, type })) as {
+            items: Array<{ id: number }>;
+          }
+        ).items.map((item) => item.id);
+      expect(await listIds("C")).toContain(transactionId);
+      expect(await listIds("D")).not.toContain(transactionId);
+
+      await deleteDraft(transactionId);
     });
   });
 });

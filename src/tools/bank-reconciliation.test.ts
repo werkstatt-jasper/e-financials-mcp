@@ -28,13 +28,31 @@ function projectTx(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * Fixture rows carry the letter RIK stored them with (D = incoming payment, as written).
+ * Like RIK, the list returns C for every row and only the type filter shows the incoming ones.
+ */
+function storedLetterClient(client: EFinancialsClient): EFinancialsClient {
+  return {
+    ...client,
+    getAllPages: async (path: string, params?: Parameters<EFinancialsClient["getAllPages"]>[1]) => {
+      const result = await client.getAllPages(path, params);
+      if (path !== "/v1/transactions") return result;
+      const rows = result as Array<{ type?: string }>;
+      return (params?.type === undefined ? rows : rows.filter((row) => row.type === "D")).map(
+        (row) => ({ ...row, type: "C" }),
+      );
+    },
+  } as EFinancialsClient;
+}
+
 describe("bank reconciliation tools", () => {
   let client: EFinancialsClient;
   let tools: ReturnType<typeof createBankReconciliationTools>;
 
   beforeEach(() => {
     client = createMockClient();
-    tools = createBankReconciliationTools(client);
+    tools = createBankReconciliationTools(storedLetterClient(client));
     vi.mocked(client.getAllPages).mockImplementation(async (path: string) => {
       if (path === "/v1/transactions") {
         return [

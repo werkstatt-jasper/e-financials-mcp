@@ -1,13 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   directionFromToolType,
-  messageMatchesDirection,
+  reportedMessages,
   rikMessages,
   rikTypeForToolType,
-  savedDirectionFromMessages,
-  toolTypeFromRikType,
   transactionIdFromResponse,
-  withToolTransactionType,
 } from "./transaction-direction.js";
 
 describe("transaction direction", () => {
@@ -16,34 +13,12 @@ describe("transaction direction", () => {
     expect(rikTypeForToolType("C")).toBe("D");
     expect(directionFromToolType("D")).toBe("outgoing");
     expect(directionFromToolType("C")).toBe("incoming");
-    expect(toolTypeFromRikType("C")).toBe("D");
-    expect(toolTypeFromRikType("D")).toBe("C");
-    expect(toolTypeFromRikType(undefined)).toBeUndefined();
-    expect(toolTypeFromRikType("X")).toBeUndefined();
-    expect(withToolTransactionType({ id: 1, type: "C" })).toEqual({ id: 1, type: "D" });
-    expect(withToolTransactionType({ id: 2 })).toEqual({ id: 2 });
   });
 
-  it("matches English and Estonian save messages", () => {
-    expect(messageMatchesDirection(["Outgoing payment has been saved."], "outgoing")).toBe(true);
-    expect(messageMatchesDirection(["Incoming payment has been saved."], "incoming")).toBe(true);
-    expect(messageMatchesDirection(["Väljaminev makse on salvestatud."], "outgoing")).toBe(true);
-    expect(messageMatchesDirection(["Väljuv makse on salvestatud."], "outgoing")).toBe(true);
-    expect(messageMatchesDirection(["Sissetulev makse on salvestatud."], "incoming")).toBe(true);
-    expect(messageMatchesDirection(["Laekuv makse on salvestatud."], "incoming")).toBe(true);
-    expect(messageMatchesDirection(["Laekumine on salvestatud."], "incoming")).toBe(true);
-    expect(messageMatchesDirection(["Laekunud makse."], "incoming")).toBe(true);
-    expect(messageMatchesDirection(["Väljamakse on salvestatud."], "outgoing")).toBe(true);
-    expect(savedDirectionFromMessages(["Tasumine on salvestatud."])).toBe("unknown");
-    expect(savedDirectionFromMessages(["Müügiarve tasumine on salvestatud."])).toBe("unknown");
-    expect(savedDirectionFromMessages(["Müügiarve laekumine, tasumine"])).toBe("incoming");
-    expect(savedDirectionFromMessages([])).toBe("unknown");
-    expect(messageMatchesDirection(["Outgoing payment has been saved."], "incoming")).toBe(false);
-    expect(messageMatchesDirection(["Incoming payment has been saved."], "outgoing")).toBe(false);
-    expect(messageMatchesDirection(["Incoming and outgoing"], "outgoing")).toBe(false);
-    expect(messageMatchesDirection(["Incoming and outgoing"], "incoming")).toBe(false);
-    expect(messageMatchesDirection(["saved"], "outgoing")).toBe(false);
-    expect(messageMatchesDirection([], "incoming")).toBe(false);
+  it("formats RIK messages for error text", () => {
+    expect(reportedMessages([])).toBe("");
+    expect(reportedMessages(["Saved."])).toBe(" RIK reported: Saved.");
+    expect(reportedMessages(["One", "Two."])).toBe(" RIK reported: One; Two.");
   });
 
   it("reads messages and ids from RIK bodies", () => {

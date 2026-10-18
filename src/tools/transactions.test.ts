@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import transactionsFixture from "../__fixtures__/transactions.json" with { type: "json" };
 import type { EFinancialsClient } from "../client.js";
-import { createMockClient, parseToolJson } from "./test-helpers.js";
+import { createMockClient, mockTransactionLists, parseToolJson } from "./test-helpers.js";
 import { createTransactionTools } from "./transactions.js";
 
 vi.mock("node:fs/promises", () => ({
@@ -21,7 +21,7 @@ describe("transaction tools", () => {
     vi.mocked(readFile).mockReset();
   });
 
-  it("list_transactions passes filters and returns paginated shape", async () => {
+  it("list_transactions type C pages RIK's incoming-rows filter", async () => {
     vi.mocked(client.get).mockResolvedValue({ ...transactionsFixture.list_paginated } as never);
 
     const result = await tools.list_transactions.handler({
@@ -40,18 +40,74 @@ describe("transaction tools", () => {
         type: "D",
       }),
     );
-    const listed = parseToolJson(result) as { items: Array<{ type?: string }> };
-    expect(listed.items[0]?.type).toBe("C");
-
     const data = parseToolJson(result) as {
-      items: unknown[];
+      items: Array<{ type?: string }>;
       current_page: number;
       total_pages: number;
     };
-    expect(data.items).toHaveLength(1);
+    expect(data.items).toEqual([{ id: 1, amount: 10, type: "C" }]);
     expect(data.current_page).toBe(2);
     expect(data.total_pages).toBe(5);
-    expect(result.content[0].type).toBe("text");
+    expect(client.getAllPages).not.toHaveBeenCalled();
+  });
+
+  it("list_transactions type D lists everything else and pages locally", async () => {
+    const rows = [
+      { id: 1, date: "2026-10-01", status: "PROJECT" },
+      { id: 2, date: "2026-10-02", status: "PROJECT" },
+      { id: 3, date: "2026-10-03", status: "CONFIRMED" },
+    ];
+    mockTransactionLists(client, rows, [2]);
+
+    const first = parseToolJson(
+      await tools.list_transactions.handler({ type: "D", clients_id: 4 }),
+    ) as { items: Array<{ id: number; type: string }>; current_page: number; total_pages: number };
+    expect(first.items.map((row) => [row.id, row.type])).toEqual([
+      [1, "D"],
+      [3, "D"],
+    ]);
+    expect(first).toMatchObject({ current_page: 1, total_pages: 1 });
+    expect(client.getAllPages).toHaveBeenCalledWith("/v1/transactions", { clients_id: 4 });
+    expect(client.getAllPages).toHaveBeenCalledWith("/v1/transactions", {
+      clients_id: 4,
+      type: "D",
+    });
+    expect(client.get).not.toHaveBeenCalled();
+
+    const second = parseToolJson(await tools.list_transactions.handler({ type: "D", page: 2 })) as {
+      items: unknown[];
+      current_page: number;
+    };
+    expect(second).toMatchObject({ items: [], current_page: 2 });
+  });
+
+  it("list_transactions without type labels the page from incoming rows in its date range", async () => {
+    const rows = [
+      { id: 1, date: "2026-10-01", type: "C" },
+      { id: 2, date: "2026-10-03", type: "C" },
+    ];
+    vi.mocked(client.get).mockResolvedValue({
+      items: rows,
+      current_page: 1,
+      total_pages: 2,
+    } as never);
+    mockTransactionLists(client, rows, [2]);
+
+    const data = parseToolJson(
+      await tools.list_transactions.handler({ status: "PROJECT", page: 1 }),
+    ) as { items: Array<{ id: number; type: string }>; total_pages: number };
+
+    expect(data.items.map((row) => [row.id, row.type])).toEqual([
+      [1, "D"],
+      [2, "C"],
+    ]);
+    expect(data.total_pages).toBe(2);
+    expect(client.getAllPages).toHaveBeenCalledWith("/v1/transactions", {
+      status: "PROJECT",
+      start_date: "2026-10-01",
+      end_date: "2026-10-03",
+      type: "D",
+    });
   });
 
   it("list_transactions defaults items when response has no items key", async () => {
@@ -59,10 +115,13 @@ describe("transaction tools", () => {
     const result = await tools.list_transactions.handler({});
     const data = parseToolJson(result) as { items: unknown[] };
     expect(data.items).toEqual([]);
+    expect(client.getAllPages).not.toHaveBeenCalled();
   });
 
   it("list_transactions uses defaults when response omits pagination", async () => {
-    vi.mocked(client.get).mockResolvedValue({ items: [{ id: 1, type: "C" }] } as never);
+    vi.mocked(client.get).mockResolvedValue({
+      items: [{ id: 1, type: "C", date: "2026-10-01" }],
+    } as never);
 
     const result = await tools.list_transactions.handler({});
     const data = parseToolJson(result) as {
@@ -70,21 +129,35 @@ describe("transaction tools", () => {
       current_page: number;
       total_pages: number;
     };
-    expect(data.items).toEqual([{ id: 1, type: "D" }]);
+    expect(data.items).toEqual([{ id: 1, type: "D", date: "2026-10-01" }]);
     expect(data.current_page).toBe(1);
     expect(data.total_pages).toBe(1);
   });
 
-  it("get_transaction fetches by id and returns JSON body", async () => {
+  it("get_transaction labels the row from that day's incoming rows", async () => {
     vi.mocked(client.get).mockResolvedValue({ ...transactionsFixture.single } as never);
+    mockTransactionLists(client, [{ id: 42 }], []);
 
-    const result = await tools.get_transaction.handler({ id: 42 });
+    const outgoing = await tools.get_transaction.handler({ id: 42 });
     expect(client.get).toHaveBeenCalledWith("/v1/transactions/42");
-    expect(parseToolJson(result)).toEqual({ id: 42, description: "Wire" });
+    expect(client.getAllPages).toHaveBeenCalledWith("/v1/transactions", {
+      start_date: "2026-10-01",
+      end_date: "2026-10-01",
+      type: "D",
+    });
+    expect(parseToolJson(outgoing)).toEqual({
+      id: 42,
+      description: "Wire",
+      type: "D",
+      date: "2026-10-01",
+    });
+
+    mockTransactionLists(client, [{ id: 42 }], [42]);
+    const incoming = await tools.get_transaction.handler({ id: 42 });
+    expect(parseToolJson(incoming)).toMatchObject({ id: 42, type: "C" });
   });
 
-  it("get_unprocessed_transactions coalesces null items to an empty list", async () => {
-    vi.mocked(client.get).mockResolvedValue({ items: null } as never);
+  it("get_unprocessed_transactions returns empty when there are no drafts", async () => {
     const result = await tools.get_unprocessed_transactions.handler({});
     const data = parseToolJson(result) as { count: number; transactions: unknown[] };
     expect(data.count).toBe(0);
@@ -92,61 +165,57 @@ describe("transaction tools", () => {
   });
 
   it("get_unprocessed_transactions returns empty when all rows have clients_id", async () => {
-    vi.mocked(client.get).mockResolvedValue({
-      items: [{ id: 1, clients_id: 9, status: "PROJECT", type: "C", amount: 1, description: "x" }],
-    } as never);
+    mockTransactionLists(
+      client,
+      [{ id: 1, clients_id: 9, status: "PROJECT", amount: 1, description: "x" }],
+      [],
+    );
     const result = await tools.get_unprocessed_transactions.handler({});
     const data = parseToolJson(result) as { count: number };
     expect(data.count).toBe(0);
   });
 
   it("get_unprocessed_transactions treats undefined clients_id as unprocessed", async () => {
-    vi.mocked(client.get).mockResolvedValue({
-      items: [{ id: 1, status: "PROJECT", type: "C", amount: 1, description: "x" }],
-    } as never);
+    mockTransactionLists(client, [{ id: 1, status: "PROJECT", amount: 1, description: "x" }], []);
     const result = await tools.get_unprocessed_transactions.handler({});
-    const data = parseToolJson(result) as { count: number };
+    const data = parseToolJson(result) as { count: number; transactions: { type: string }[] };
     expect(data.count).toBe(1);
+    expect(data.transactions[0].type).toBe("D");
   });
 
   it("get_unprocessed_transactions treats clients_id zero as unassigned", async () => {
-    vi.mocked(client.get).mockResolvedValue({
-      items: [
-        {
-          id: 1,
-          clients_id: 0,
-          status: "PROJECT",
-          type: "C",
-          amount: 1,
-          description: "edge",
-        },
-      ],
-    } as never);
+    mockTransactionLists(
+      client,
+      [{ id: 1, clients_id: 0, status: "PROJECT", amount: 1, description: "edge" }],
+      [1],
+    );
     const result = await tools.get_unprocessed_transactions.handler({});
     const data = parseToolJson(result) as { count: number; transactions: { id: number }[] };
     expect(data.count).toBe(1);
     expect(data.transactions[0].id).toBe(1);
   });
 
-  it("get_unprocessed_transactions filters out rows with clients_id", async () => {
-    vi.mocked(client.get).mockResolvedValue({ ...transactionsFixture.unprocessed_mixed } as never);
+  it("get_unprocessed_transactions filters by direction and drops rows with clients_id", async () => {
+    const drafts = [
+      ...transactionsFixture.unprocessed_mixed.items,
+      { id: 3, clients_id: null, status: "PROJECT", type: "C", amount: 3, description: "c" },
+    ];
+    mockTransactionLists(client, drafts, [1, 2]);
 
-    const result = await tools.get_unprocessed_transactions.handler({
-      type: "C",
+    const incoming = parseToolJson(
+      await tools.get_unprocessed_transactions.handler({ type: "C", start_date: "2025-01-01" }),
+    ) as { count: number; transactions: { id: number; type: string }[] };
+
+    expect(client.getAllPages).toHaveBeenCalledWith("/v1/transactions", {
+      status: "PROJECT",
       start_date: "2025-01-01",
     });
+    expect(incoming.transactions.map((row) => [row.id, row.type])).toEqual([[1, "C"]]);
 
-    expect(client.get).toHaveBeenCalledWith(
-      "/v1/transactions",
-      expect.objectContaining({
-        status: "PROJECT",
-        type: "D",
-        start_date: "2025-01-01",
-      }),
-    );
-    const data = parseToolJson(result) as { count: number; transactions: { id: number }[] };
-    expect(data.count).toBe(1);
-    expect(data.transactions[0].id).toBe(1);
+    const outgoing = parseToolJson(
+      await tools.get_unprocessed_transactions.handler({ type: "D" }),
+    ) as { transactions: { id: number; type: string }[] };
+    expect(outgoing.transactions.map((row) => [row.id, row.type])).toEqual([[3, "D"]]);
   });
 
   it("update_transaction patches and wraps success", async () => {
@@ -209,6 +278,7 @@ describe("transaction tools", () => {
       messages: ["Incoming payment has been saved."],
     } as never);
     vi.mocked(client.get).mockResolvedValue({ id: 2, type: "C", status: "PROJECT" } as never);
+    mockTransactionLists(client, [{ id: 2 }], [2]);
 
     await tools.create_transaction.handler({
       accounts_dimensions_id: 1,
@@ -389,31 +459,41 @@ describe("transaction tools", () => {
     await expect(tools.list_transactions.handler({})).rejects.toThrow("404");
   });
 
-  it("update_transaction sets direction when RIK confirms it", async () => {
+  it("update_transaction sets direction when RIK stores it", async () => {
     vi.mocked(client.patch).mockResolvedValue({
       messages: ["Outgoing payment has been saved."],
     } as never);
+    vi.mocked(client.get).mockResolvedValue({ id: 7, type: "C", date: "2026-10-01" } as never);
 
     const result = await tools.update_transaction.handler({ id: 7, type: "D" });
 
     expect(client.patch).toHaveBeenCalledWith("/v1/transactions/7", { type: "C" });
+    expect(client.getAllPages).toHaveBeenCalledWith("/v1/transactions", {
+      start_date: "2026-10-01",
+      end_date: "2026-10-01",
+      type: "D",
+    });
     expect(parseToolJson(result)).toMatchObject({
       success: true,
       type: "D",
       rik_messages: ["Outgoing payment has been saved."],
+      direction_confirmed: true,
     });
   });
 
-  it("update_transaction rejects a direction RIK does not confirm", async () => {
+  it("update_transaction rejects a direction RIK does not store", async () => {
     vi.mocked(client.patch).mockResolvedValue({
       messages: ["Incoming payment has been saved."],
     } as never);
+    vi.mocked(client.get).mockResolvedValue({ id: 7, type: "C", date: "2026-10-01" } as never);
+    mockTransactionLists(client, [{ id: 7 }], [7]);
 
     await expect(tools.update_transaction.handler({ id: 7, type: "D" })).rejects.toThrow(
-      /did not confirm type D/,
+      "Transaction 7 was updated, but RIK still stores it as incoming, not type D (outgoing). RIK reported: Incoming payment has been saved.",
     );
 
     vi.mocked(client.patch).mockResolvedValue({} as never);
+    vi.mocked(client.getAllPages).mockRejectedValue(new Error("HTTP 503"));
     const unconfirmed = parseToolJson(
       await tools.update_transaction.handler({ id: 7, type: "C" }),
     ) as { success: boolean; direction_confirmed: boolean };
@@ -487,6 +567,9 @@ describe("transaction tools", () => {
       } as never)
       .mockResolvedValueOnce({ id: 79, type: "C", status: "PROJECT" } as never);
     vi.mocked(client.post).mockResolvedValue({ id: 79, messages: ["Saved."] } as never);
+    vi.mocked(client.getAllPages)
+      .mockResolvedValueOnce([] as never)
+      .mockRejectedValueOnce(new Error("HTTP 503"));
 
     const result = parseToolJson(
       await tools.pay_purchase_invoice.handler({
@@ -506,7 +589,7 @@ describe("transaction tools", () => {
       rik_messages: ["Saved."],
     });
     expect((result as { message: string }).message).toMatch(
-      /draft 79 was not registered against purchase invoice 10/,
+      /draft 79 could not be confirmed as outgoing, so it was not registered against purchase invoice 10/,
     );
     expect(client.patch).not.toHaveBeenCalled();
     expect(client.delete).not.toHaveBeenCalled();
@@ -561,7 +644,12 @@ describe("transaction tools", () => {
       }),
     );
     expect(paid).toMatchObject({ transaction_id: 80, registered: true });
-    expect(client.getAllPages).not.toHaveBeenCalled();
+    expect(client.getAllPages).toHaveBeenCalledTimes(1);
+    expect(client.getAllPages).toHaveBeenCalledWith("/v1/transactions", {
+      start_date: "2026-10-01",
+      end_date: "2026-10-01",
+      type: "D",
+    });
   });
 
   it("pay_purchase_invoice refuses a same-day confirmed payment of the invoice", async () => {

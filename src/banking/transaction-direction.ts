@@ -1,70 +1,21 @@
 /**
  * Tool contract used by MCP tools and bank matching: C = money in, D = money out.
  *
- * The live RIK API stores the cash-account debit/credit letter, which is the
- * opposite of that contract:
- * - POST/PATCH `type: "D"` → incoming ("Incoming payment has been saved.")
- * - POST/PATCH `type: "C"` → outgoing ("Outgoing payment has been saved.")
- * Reads translate the stored letter back to the tool contract. A GET that
- * returns C for every row cannot be repaired by that translation.
+ * RIK stores the cash-account debit/credit letter, which is the opposite:
+ * POST/PATCH `type: "D"` saves an incoming payment and `type: "C"` an outgoing
+ * one. GET does not return that letter (see `stored-direction.ts`).
  */
 
 export type ToolTransactionType = "C" | "D";
 export type TransactionDirection = "incoming" | "outgoing";
-export type SavedDirection = TransactionDirection | "unknown";
-
-const OUTGOING_MESSAGE = /outgoing|väljaminev|väljuv|väljamakse/i;
-const INCOMING_MESSAGE = /incoming|sissetulev|laekuv|laekumine|laekunud/i;
 
 /** RIK letter to send for a tool type. */
 export function rikTypeForToolType(toolType: ToolTransactionType): ToolTransactionType {
   return toolType === "D" ? "C" : "D";
 }
 
-/** Tool letter for a letter stored by RIK. Anything else is left unchanged. */
-export function toolTypeFromRikType(
-  rikType: string | null | undefined,
-): ToolTransactionType | undefined {
-  if (rikType === "C") {
-    return "D";
-  }
-  if (rikType === "D") {
-    return "C";
-  }
-  return undefined;
-}
-
-export function withToolTransactionType<T extends object>(row: T): T {
-  const toolType = toolTypeFromRikType((row as { type?: string | null }).type);
-  if (toolType == null) {
-    return row;
-  }
-  return { ...row, type: toolType };
-}
-
 export function directionFromToolType(toolType: ToolTransactionType): TransactionDirection {
   return toolType === "D" ? "outgoing" : "incoming";
-}
-
-/**
- * Direction named by a save message. Empty, unrecognized, or mixed wording is
- * unknown: callers keep the row instead of treating that as the wrong direction.
- */
-export function savedDirectionFromMessages(messages: readonly string[]): SavedDirection {
-  const text = messages.join(" ");
-  const outgoing = OUTGOING_MESSAGE.test(text);
-  const incoming = INCOMING_MESSAGE.test(text);
-  if (outgoing === incoming) {
-    return "unknown";
-  }
-  return outgoing ? "outgoing" : "incoming";
-}
-
-export function messageMatchesDirection(
-  messages: readonly string[],
-  direction: TransactionDirection,
-): boolean {
-  return savedDirectionFromMessages(messages) === direction;
 }
 
 /** Save-confirmation text from a RIK POST/PATCH body (`messages` or `response_message`). */
@@ -80,6 +31,11 @@ export function rikMessages(response: unknown): string[] {
     return [record.response_message];
   }
   return [];
+}
+
+/** " RIK reported: …." for error text, or "" when RIK sent no message. */
+export function reportedMessages(messages: readonly string[]): string {
+  return messages.length > 0 ? ` RIK reported: ${messages.join("; ").replace(/\.$/, "")}.` : "";
 }
 
 export function transactionIdFromResponse(response: unknown): number | undefined {

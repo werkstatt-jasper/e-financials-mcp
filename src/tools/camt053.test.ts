@@ -151,12 +151,13 @@ describe("process_camt053", () => {
   let client: EFinancialsClient;
   let tools: ReturnType<typeof createCamt053Tools>;
 
-  beforeEach(() => {
-    client = createMockClient();
-    tools = createCamt053Tools(client);
-    vi.mocked(client.getAllPages).mockImplementation(async (path) => {
+  /** Existing rows come from the plain list; the type filter returns the rows stored as incoming. */
+  function mockLookups(existing: unknown[] = [], incomingIds: number[] = []) {
+    vi.mocked(client.getAllPages).mockImplementation(async (path, params) => {
       if (path === "/v1/transactions") {
-        return [] as never;
+        return (
+          params?.type === undefined ? existing : incomingIds.map((id) => ({ id, type: "C" }))
+        ) as never;
       }
       if (path === "/v1/account_dimensions") {
         return [dimension] as never;
@@ -166,6 +167,12 @@ describe("process_camt053", () => {
       }
       throw new Error(`unexpected getAllPages ${path}`);
     });
+  }
+
+  beforeEach(() => {
+    client = createMockClient();
+    tools = createCamt053Tools(client);
+    mockLookups();
   });
 
   it("defaults to parse and flags duplicates without writing", async () => {
@@ -235,6 +242,7 @@ describe("process_camt053", () => {
   });
 
   it("execute creates PROJECT transactions and continues after per-entry errors", async () => {
+    mockLookups([], [101]);
     vi.mocked(client.get).mockResolvedValue({ id: 101, type: "C", status: "PROJECT" } as never);
     vi.mocked(client.post)
       .mockResolvedValueOnce({ id: 101, messages: ["Incoming payment has been saved."] } as never)
@@ -360,7 +368,13 @@ describe("process_camt053", () => {
   });
 
   it("execute records possible duplicates against the new api id", async () => {
-    vi.mocked(client.getAllPages).mockImplementation(async (path) => {
+    vi.mocked(client.getAllPages).mockImplementation(async (path, params) => {
+      if (path === "/v1/transactions" && params?.type !== undefined) {
+        return [
+          { id: 77, type: "C" },
+          { id: 500, type: "C" },
+        ] as never;
+      }
       if (path === "/v1/transactions") {
         return [
           existingTx({
@@ -397,7 +411,13 @@ describe("process_camt053", () => {
     expect(data.possible_duplicates[0]?.new_transaction_api_id).toBe(500);
   });
 
-  it("execute flags rows whose save message does not confirm the direction", async () => {
+  it("execute flags rows whose stored direction cannot be checked", async () => {
+    vi.mocked(client.getAllPages).mockImplementation(async (path, params) => {
+      if (path === "/v1/transactions" && params?.start_date === "2025-06-03") {
+        throw new Error("HTTP 503");
+      }
+      return (path === "/v1/account_dimensions" ? [dimension] : []) as never;
+    });
     vi.mocked(client.get).mockResolvedValue({ id: 102, type: "C", status: "PROJECT" } as never);
     vi.mocked(client.post).mockResolvedValue({ id: 102, messages: ["Saved."] } as never);
     const xml = camtXml(ntry({ amt: "3", date: "2025-06-03", ref: "U1", dir: "DBIT" }));
@@ -570,6 +590,7 @@ describe("process_camt053", () => {
   });
 
   it("execute reports a direction mismatch as an error and does not keep the draft", async () => {
+    mockLookups([], [9]);
     vi.mocked(client.post).mockResolvedValue({
       id: 9,
       messages: ["Incoming payment has been saved."],
