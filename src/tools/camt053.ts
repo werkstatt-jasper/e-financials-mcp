@@ -10,6 +10,7 @@ import {
 import { type CamtEntry, parseCamt053 } from "../banking/camt053-parser.js";
 import { createVerifiedTransaction } from "../banking/create-verified-transaction.js";
 import { errorMessage } from "../banking/errors.js";
+import { withToolTransactionType } from "../banking/transaction-direction.js";
 import type { EFinancialsClient } from "../client.js";
 import { resolveFileInput } from "../resolve-file-input.js";
 import type { AccountDimension } from "../types/accounts.js";
@@ -173,7 +174,9 @@ export function createCamt053Tools(client: EFinancialsClient) {
             start_date: args.date_from,
             end_date: args.date_to,
           })
-        ).filter((t) => t.status !== "VOID" && t.is_deleted !== true);
+        )
+          .filter((t) => t.status !== "VOID" && t.is_deleted !== true)
+          .map((t) => withToolTransactionType(t));
 
         if (mode === "parse") {
           const index = buildDuplicateIndex(existing, eligible);

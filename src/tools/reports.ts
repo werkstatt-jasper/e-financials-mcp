@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { withToolTransactionType } from "../banking/transaction-direction.js";
 import type { EFinancialsClient } from "../client.js";
 import type { Client } from "../types/clients.js";
 import type { PurchaseInvoice, SalesInvoice } from "../types/invoice.js";
@@ -102,7 +103,7 @@ export function createReportTools(client: EFinancialsClient) {
           }),
         ]);
 
-        const transactions = transactionsRes.items || [];
+        const transactions = (transactionsRes.items || []).map(withToolTransactionType);
         const salesInvoices = salesRes.items || [];
         const purchaseInvoices = purchaseRes.items || [];
 
@@ -328,7 +329,7 @@ export function createReportTools(client: EFinancialsClient) {
           }),
         ]);
 
-        const transactions = transactionsRes.items || [];
+        const transactions = (transactionsRes.items || []).map(withToolTransactionType);
         const salesInvoices = salesRes.items || [];
         const purchaseInvoices = purchaseRes.items || [];
 

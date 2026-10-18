@@ -17,7 +17,7 @@ function projectTx(overrides: Record<string, unknown> = {}) {
     bank_accounts_id: 1,
     bank_ref_number: "",
     bank_subtype: "",
-    type: "D",
+    type: "C",
     bank_account_no: null,
     bank_account_name: "Notion Labs",
     ref_number: null,
@@ -47,7 +47,7 @@ describe("classify_bank_transactions", () => {
           projectTx({ id: 2, amount: 10, date: "2025-05-01" }),
           projectTx({
             id: 3,
-            type: "C",
+            type: "D",
             amount: 100,
             bank_account_name: "Buyer Co",
             ref_number: "R1",

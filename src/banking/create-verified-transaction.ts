@@ -3,15 +3,18 @@ import type { Transaction } from "../types/transaction.js";
 import { errorMessage } from "./errors.js";
 import {
   directionFromToolType,
-  messageMatchesDirection,
   rikMessages,
   rikTypeForToolType,
+  savedDirectionFromMessages,
   type ToolTransactionType,
+  type TransactionDirection,
   transactionIdFromResponse,
 } from "./transaction-direction.js";
 
 export interface VerifiedTransaction extends Transaction {
   rik_messages: string[];
+  /** False when RIK's save message did not name the requested direction. The draft is kept. */
+  direction_confirmed: boolean;
 }
 
 function directionError(
@@ -19,7 +22,7 @@ function directionError(
   apiType: ToolTransactionType,
   messages: string[],
 ): string {
-  const reported = messages.length > 0 ? messages.join("; ") : "(no message)";
+  const reported = messages.join("; ");
   return `Requested type ${toolType} (${directionFromToolType(toolType)}), sent API type ${apiType}, RIK reported: ${reported}.`;
 }
 
@@ -31,11 +34,15 @@ async function deleteDraft(client: EFinancialsClient, id: number): Promise<void>
   }
 }
 
+function oppositeDirection(direction: TransactionDirection): TransactionDirection {
+  return direction === "outgoing" ? "incoming" : "outgoing";
+}
+
 /**
- * Create a PROJECT transaction and keep it only when RIK's save message matches
- * the requested direction. The wire `type` is the opposite of the tool contract.
- * When the first message is wrong, PATCH the same API type once (that corrects
- * a dropped letter). A second miss deletes the draft.
+ * Create a PROJECT transaction. The wire `type` is the opposite of the tool
+ * contract. A save message that names the other direction is patched once and
+ * then the draft is deleted. An empty or unrecognized message keeps the draft
+ * with `direction_confirmed: false`.
  */
 export async function createVerifiedTransaction(
   client: EFinancialsClient,
@@ -51,10 +58,12 @@ export async function createVerifiedTransaction(
   }
 
   let messages = rikMessages(posted);
-  if (!messageMatchesDirection(messages, direction)) {
+  let saved = savedDirectionFromMessages(messages);
+  if (saved === oppositeDirection(direction)) {
     try {
       const patched = await client.patch(`/v1/transactions/${id}`, { type: apiType });
       messages = rikMessages(patched);
+      saved = savedDirectionFromMessages(messages);
     } catch (error) {
       try {
         await deleteDraft(client, id);
@@ -67,7 +76,7 @@ export async function createVerifiedTransaction(
         `${directionError(toolType, apiType, messages)} PATCH failed: ${errorMessage(error)} The draft was deleted.`,
       );
     }
-    if (!messageMatchesDirection(messages, direction)) {
+    if (saved === oppositeDirection(direction)) {
       try {
         await deleteDraft(client, id);
       } catch (deleteError) {
@@ -88,5 +97,6 @@ export async function createVerifiedTransaction(
     id,
     type: toolType,
     rik_messages: messages,
+    direction_confirmed: saved === direction,
   };
 }

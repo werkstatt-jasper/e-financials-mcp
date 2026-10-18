@@ -47,6 +47,7 @@ describe("createVerifiedTransaction", () => {
     expect(created).toMatchObject({
       id: 5,
       type: "D",
+      direction_confirmed: true,
       rik_messages: ["Outgoing payment has been saved."],
     });
   });
@@ -85,15 +86,46 @@ describe("createVerifiedTransaction", () => {
     expect(client.patch).toHaveBeenCalledWith("/v1/transactions/7", { type: "C" });
     expect(client.delete).not.toHaveBeenCalled();
     expect(created.rik_messages).toEqual(["Outgoing payment has been saved."]);
+    expect(created.direction_confirmed).toBe(true);
   });
 
-  it("deletes the draft when POST and PATCH both disagree", async () => {
+  it("keeps an unrecognized save message without patching", async () => {
+    const client = mockClient();
+    vi.mocked(client.post).mockResolvedValue({ id: 8, messages: ["nope"] } as never);
+    vi.mocked(client.get).mockResolvedValue({ id: 8, type: "C", status: "PROJECT" } as never);
+
+    const created = await createVerifiedTransaction(client, outgoingBody);
+
+    expect(client.patch).not.toHaveBeenCalled();
+    expect(client.delete).not.toHaveBeenCalled();
+    expect(created.direction_confirmed).toBe(false);
+    expect(created.type).toBe("D");
+  });
+
+  it("keeps the draft when a correcting PATCH no longer names a direction", async () => {
     const client = mockClient();
     vi.mocked(client.post).mockResolvedValue({
       id: 8,
       messages: ["Incoming payment has been saved."],
     } as never);
     vi.mocked(client.patch).mockResolvedValue({ messages: [] } as never);
+    vi.mocked(client.get).mockResolvedValue({ id: 8, type: "C", status: "PROJECT" } as never);
+
+    const created = await createVerifiedTransaction(client, outgoingBody);
+
+    expect(client.delete).not.toHaveBeenCalled();
+    expect(created.direction_confirmed).toBe(false);
+  });
+
+  it("deletes the draft when POST and PATCH both name the other direction", async () => {
+    const client = mockClient();
+    vi.mocked(client.post).mockResolvedValue({
+      id: 8,
+      messages: ["Incoming payment has been saved."],
+    } as never);
+    vi.mocked(client.patch).mockResolvedValue({
+      messages: ["Incoming payment has been saved."],
+    } as never);
     vi.mocked(client.delete).mockResolvedValue({} as never);
 
     await expect(createVerifiedTransaction(client, outgoingBody)).rejects.toThrow(
@@ -104,8 +136,13 @@ describe("createVerifiedTransaction", () => {
 
   it("includes a delete failure after a wrong PATCH message", async () => {
     const client = mockClient();
-    vi.mocked(client.post).mockResolvedValue({ id: 8, messages: ["nope"] } as never);
-    vi.mocked(client.patch).mockResolvedValue({ messages: ["nope"] } as never);
+    vi.mocked(client.post).mockResolvedValue({
+      id: 8,
+      messages: ["Incoming payment has been saved."],
+    } as never);
+    vi.mocked(client.patch).mockResolvedValue({
+      messages: ["Incoming payment has been saved."],
+    } as never);
     vi.mocked(client.delete).mockRejectedValue(new Error("gone"));
 
     await expect(createVerifiedTransaction(client, outgoingBody)).rejects.toThrow(
@@ -115,7 +152,10 @@ describe("createVerifiedTransaction", () => {
 
   it("deletes the draft when the correcting PATCH throws", async () => {
     const client = mockClient();
-    vi.mocked(client.post).mockResolvedValue({ id: 8, messages: ["nope"] } as never);
+    vi.mocked(client.post).mockResolvedValue({
+      id: 8,
+      messages: ["Incoming payment has been saved."],
+    } as never);
     vi.mocked(client.patch).mockRejectedValue("patch-string");
     vi.mocked(client.delete).mockResolvedValue({} as never);
 
@@ -126,7 +166,10 @@ describe("createVerifiedTransaction", () => {
 
   it("reports both failures when PATCH and delete throw", async () => {
     const client = mockClient();
-    vi.mocked(client.post).mockResolvedValue({ id: 8, messages: ["nope"] } as never);
+    vi.mocked(client.post).mockResolvedValue({
+      id: 8,
+      messages: ["Incoming payment has been saved."],
+    } as never);
     vi.mocked(client.patch).mockRejectedValue(new Error("patch no"));
     vi.mocked(client.delete).mockRejectedValue(new Error("delete no"));
 
