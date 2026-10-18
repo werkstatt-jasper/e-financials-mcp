@@ -22,6 +22,7 @@ import type {
 } from "../types/transaction.js";
 import {
   creditDebitEnum,
+  optionalBoolean,
   optionalNumber,
   optionalPage,
   optionalPositiveInt,
@@ -69,7 +70,44 @@ const payPurchaseInvoiceSchema = z.object({
   amount: optionalNumber,
   description: optionalString,
   currency_rate: optionalNumber,
+  allow_duplicate: optionalBoolean,
 });
+
+function samePaymentAmount(value: unknown, amount: number): boolean {
+  return typeof value === "number" && roundMoney(value) === roundMoney(amount);
+}
+
+/** Supplier drafts with this amount, and this invoice's confirmed payments of this amount on this date. */
+async function findPossibleDuplicatePayments(
+  client: EFinancialsClient,
+  invoice: PurchaseInvoice,
+  amount: number,
+  date: string,
+): Promise<Transaction[]> {
+  const drafts = (
+    await client.getAllPages<Transaction>("/v1/transactions", {
+      status: "PROJECT",
+      clients_id: invoice.clients_id,
+    })
+  ).filter(
+    (tx) =>
+      tx.status === "PROJECT" &&
+      tx.clients_id === invoice.clients_id &&
+      samePaymentAmount(tx.amount, amount),
+  );
+  const confirmed: Transaction[] = [];
+  for (const id of Array.isArray(invoice.transactions) ? invoice.transactions : []) {
+    const tx = (await client.get(`/v1/transactions/${id}`)) as Transaction;
+    if (
+      tx.status === "CONFIRMED" &&
+      String(tx.date).slice(0, 10) === date &&
+      samePaymentAmount(tx.amount, amount)
+    ) {
+      confirmed.push(tx);
+    }
+  }
+  return [...drafts, ...confirmed];
+}
 
 const createTransactionSchema = z.object({
   accounts_dimensions_id: positiveInt,
@@ -421,7 +459,7 @@ export function createTransactionTools(client: EFinancialsClient) {
 
     pay_purchase_invoice: {
       description:
-        'Mark a CONFIRMED purchase invoice paid from a cash or bank dimension (for example account 1360, Arveldused aruandvate isikutega). Creates an outgoing transaction (type D, money out) and registers it against the invoice, which is the API form of the e-arveldaja posting "Ostuarve nr … tasumine". A returned transaction_id means the payment is already registered; do not call again if the invoice could not be re-read. Amount defaults to the invoice gross price when the invoice is unpaid, and must not exceed that gross price. The API does not report the unpaid remainder, so a second partial payment can still exceed what remains. A PARTIALLY_PAID invoice requires amount. A non-EUR invoice sends currency_rate and a base_amount scaled from base_gross_price; pass currency_rate when the invoice has none. If registration fails, the draft is deleted.',
+        'Mark a CONFIRMED purchase invoice paid from a cash or bank dimension (for example account 1360, Arveldused aruandvate isikutega). Creates an outgoing transaction (type D, money out) and registers it against the invoice, which is the API form of the e-arveldaja posting "Ostuarve nr … tasumine". registered: true means the payment is registered; do not call again if the invoice could not be re-read. Amount defaults to the invoice gross price when the invoice is unpaid, and must not exceed that gross price. The API does not report the unpaid remainder, so a second partial payment can still exceed what remains. A PARTIALLY_PAID invoice requires amount. A non-EUR invoice sends currency_rate and a base_amount scaled from base_gross_price; pass currency_rate when the invoice has none. Refuses before any write when the supplier already has a PROJECT draft with the same amount, or the invoice already has a CONFIRMED payment with the same amount and date; pass allow_duplicate=true to pay anyway. When RIK\'s save message does not confirm an outgoing payment, the draft is kept but not registered (registered: false with its transaction_id). If registration fails, the draft is deleted.',
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -452,6 +490,11 @@ export function createTransactionTools(client: EFinancialsClient) {
             type: "number",
             description:
               "Exchange rate to EUR. Required when the invoice is not in EUR and has no currency_rate of its own.",
+          },
+          allow_duplicate: {
+            type: "boolean",
+            description:
+              "Pay even when a matching supplier draft or same-day payment of this invoice already exists.",
           },
         },
         required: ["purchase_invoices_id", "accounts_dimensions_id", "date"],
@@ -524,10 +567,50 @@ export function createTransactionTools(client: EFinancialsClient) {
               ? roundMoney((baseGross * amount) / gross)
               : roundMoney(amount * rate);
         }
+        if (!args.allow_duplicate) {
+          const duplicates = await findPossibleDuplicatePayments(
+            client,
+            invoice,
+            amount,
+            args.date,
+          );
+          if (duplicates.length > 0) {
+            const list = duplicates
+              .map((tx) => `${tx.id} (${tx.status}, ${tx.date}, ${tx.amount})`)
+              .join(", ");
+            throw new Error(
+              `Possible duplicate payment for purchase invoice ${args.purchase_invoices_id}: transaction ${list}. Register an existing draft with register_transaction, delete it with delete_transaction, or pass allow_duplicate=true to create another payment.`,
+            );
+          }
+        }
         const created = await createVerifiedTransaction(client, {
           ...payment,
           type: "D",
         });
+        if (!created.direction_confirmed) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify(
+                  {
+                    registered: false,
+                    transaction_id: created.id,
+                    message: `RIK's save message did not confirm an outgoing payment, so draft ${created.id} was not registered against purchase invoice ${args.purchase_invoices_id}. Check in e-Financials that it is an outgoing payment, then register it with register_transaction, or delete it with delete_transaction.`,
+                    type: created.type,
+                    amount,
+                    direction_confirmed: false,
+                    payment_status: paymentStatus,
+                    rik_messages: created.rik_messages,
+                    read_back_error: created.read_back_error,
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          };
+        }
         try {
           await client.patch(`/v1/transactions/${created.id}/register`, [
             {
@@ -565,8 +648,10 @@ export function createTransactionTools(client: EFinancialsClient) {
                   type: created.type,
                   amount,
                   registered: true,
+                  direction_confirmed: true,
                   payment_status: refreshedPaymentStatus,
                   rik_messages: created.rik_messages,
+                  read_back_error: created.read_back_error,
                 },
                 null,
                 2,

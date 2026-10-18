@@ -187,19 +187,40 @@ describe("createVerifiedTransaction", () => {
     expect(client.delete).not.toHaveBeenCalled();
   });
 
-  it("throws when the read-back is empty", async () => {
+  it("returns the created id when the read-back is empty", async () => {
     const client = mockClient();
     vi.mocked(client.post).mockResolvedValue({
       id: 5,
       messages: ["Outgoing payment has been saved."],
     } as never);
     vi.mocked(client.get).mockResolvedValue(null as never);
-    await expect(createVerifiedTransaction(client, outgoingBody)).rejects.toThrow(
-      /read-back was empty/,
-    );
+    const empty = await createVerifiedTransaction(client, outgoingBody);
+    expect(empty).toMatchObject({
+      ...outgoingBody,
+      id: 5,
+      type: "D",
+      direction_confirmed: true,
+      read_back_error:
+        "Transaction 5 was created but could not be read back: the response was empty",
+    });
     vi.mocked(client.get).mockResolvedValue([] as never);
-    await expect(createVerifiedTransaction(client, outgoingBody)).rejects.toThrow(
-      /read-back was empty/,
+    const list = await createVerifiedTransaction(client, outgoingBody);
+    expect(list.read_back_error).toMatch(/response was empty/);
+    expect(client.delete).not.toHaveBeenCalled();
+  });
+
+  it("returns the created id when the read-back throws", async () => {
+    const client = mockClient();
+    vi.mocked(client.post).mockResolvedValue({
+      id: 5,
+      messages: ["Outgoing payment has been saved."],
+    } as never);
+    vi.mocked(client.get).mockRejectedValue(new Error("HTTP 503"));
+    const created = await createVerifiedTransaction(client, outgoingBody);
+    expect(created).toMatchObject({ id: 5, type: "D", amount: 10, direction_confirmed: true });
+    expect(created.read_back_error).toBe(
+      "Transaction 5 was created but could not be read back: HTTP 503",
     );
+    expect(client.delete).not.toHaveBeenCalled();
   });
 });

@@ -33,9 +33,10 @@ describe("transaction direction", () => {
     expect(messageMatchesDirection(["Laekuv makse on salvestatud."], "incoming")).toBe(true);
     expect(messageMatchesDirection(["Laekumine on salvestatud."], "incoming")).toBe(true);
     expect(messageMatchesDirection(["Laekunud makse."], "incoming")).toBe(true);
-    expect(messageMatchesDirection(["Tasumine on salvestatud."], "outgoing")).toBe(true);
     expect(messageMatchesDirection(["Väljamakse on salvestatud."], "outgoing")).toBe(true);
-    expect(savedDirectionFromMessages(["Incoming payment and tasumine"])).toBe("unknown");
+    expect(savedDirectionFromMessages(["Tasumine on salvestatud."])).toBe("unknown");
+    expect(savedDirectionFromMessages(["Müügiarve tasumine on salvestatud."])).toBe("unknown");
+    expect(savedDirectionFromMessages(["Müügiarve laekumine, tasumine"])).toBe("incoming");
     expect(savedDirectionFromMessages([])).toBe("unknown");
     expect(messageMatchesDirection(["Outgoing payment has been saved."], "incoming")).toBe(false);
     expect(messageMatchesDirection(["Incoming payment has been saved."], "outgoing")).toBe(false);
