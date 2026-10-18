@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EFinancialsClient } from "../client.js";
 import { createClassifyBankTools } from "./classify-bank.js";
-import { createMockClient, parseToolJson } from "./test-helpers.js";
+import { createMockClient, mockTransactionLists, parseToolJson } from "./test-helpers.js";
 
 // biome-ignore lint/suspicious/noExplicitAny: test JSON payloads vary by mode
 function parsed(result: { content: Array<{ type: string; text: string }> }): any {
@@ -40,36 +40,33 @@ describe("classify_bank_transactions", () => {
   beforeEach(() => {
     client = createMockClient();
     tools = createClassifyBankTools(client);
-    vi.mocked(client.getAllPages).mockImplementation(async (path: string) => {
-      if (path === "/v1/transactions") {
-        return [
-          projectTx({ id: 1 }),
-          projectTx({ id: 2, amount: 10, date: "2025-05-01" }),
-          projectTx({
-            id: 3,
-            type: "D",
-            amount: 100,
-            bank_account_name: "Buyer Co",
-            ref_number: "R1",
-            clients_id: 7,
-          }),
-          projectTx({
-            id: 4,
-            bank_account_name: "Swedbank",
-            description: "Monthly bank fee",
-            amount: 3,
-            clients_id: 99,
-          }),
-          projectTx({
-            id: 5,
-            bank_account_name: "EMTA",
-            description: "Tax payment",
-            amount: 200,
-          }),
-          projectTx({ id: 99, status: "CONFIRMED", is_deleted: false }),
-          projectTx({ id: 98, is_deleted: true }),
-        ];
-      }
+    const rows = [
+      projectTx({ id: 1 }),
+      projectTx({ id: 2, amount: 10, date: "2025-05-01" }),
+      projectTx({
+        id: 3,
+        amount: 100,
+        bank_account_name: "Buyer Co",
+        ref_number: "R1",
+        clients_id: 7,
+      }),
+      projectTx({
+        id: 4,
+        bank_account_name: "Swedbank",
+        description: "Monthly bank fee",
+        amount: 3,
+        clients_id: 99,
+      }),
+      projectTx({
+        id: 5,
+        bank_account_name: "EMTA",
+        description: "Tax payment",
+        amount: 200,
+      }),
+      projectTx({ id: 99, status: "CONFIRMED", is_deleted: false }),
+      projectTx({ id: 98, is_deleted: true }),
+    ];
+    mockTransactionLists(client, rows, [3], (path: string) => {
       if (path === "/v1/sale_invoices") {
         return [
           {
@@ -172,15 +169,14 @@ describe("classify_bank_transactions", () => {
   });
 
   it("filters by accounts_dimensions_id and dates", async () => {
-    vi.mocked(client.getAllPages).mockImplementation(async (path: string) => {
-      if (path === "/v1/transactions") {
-        return [
-          projectTx({ id: 1, accounts_dimensions_id: 10 }),
-          projectTx({ id: 2, accounts_dimensions_id: 99, bank_account_name: "Other Dim" }),
-        ];
-      }
-      return [];
-    });
+    mockTransactionLists(
+      client,
+      [
+        projectTx({ id: 1, accounts_dimensions_id: 10 }),
+        projectTx({ id: 2, accounts_dimensions_id: 99, bank_account_name: "Other Dim" }),
+      ],
+      [],
+    );
     const result = parsed(
       await tools.classify_bank_transactions.handler({
         accounts_dimensions_id: 10,
@@ -597,33 +593,32 @@ describe("classify_bank_transactions", () => {
   });
 
   it("covers description/client fallbacks, dissimilar amounts, and currency_rate 0", async () => {
-    vi.mocked(client.getAllPages).mockImplementation(async (path: string) => {
-      if (path === "/v1/transactions") {
-        return [
-          projectTx({
-            id: 1,
-            bank_account_name: "Mixed Amounts",
-            amount: 10,
-            clients_id: null,
-          }),
-          projectTx({
-            id: 2,
-            bank_account_name: "Mixed Amounts",
-            amount: 100,
-            clients_id: null,
-            date: "2025-05-01",
-          }),
-          projectTx({
-            id: 3,
-            bank_account_name: "Swedbank",
-            description: "kuutasu",
-            amount: 2,
-            clients_id: null,
-          }),
-        ];
-      }
-      return [];
-    });
+    mockTransactionLists(
+      client,
+      [
+        projectTx({
+          id: 1,
+          bank_account_name: "Mixed Amounts",
+          amount: 10,
+          clients_id: null,
+        }),
+        projectTx({
+          id: 2,
+          bank_account_name: "Mixed Amounts",
+          amount: 100,
+          clients_id: null,
+          date: "2025-05-01",
+        }),
+        projectTx({
+          id: 3,
+          bank_account_name: "Swedbank",
+          description: "kuutasu",
+          amount: 2,
+          clients_id: null,
+        }),
+      ],
+      [],
+    );
     const classified = parsed(await tools.classify_bank_transactions.handler({}));
     const mixed = (
       classified.groups as Array<{ counterparty: string; similar_amounts: boolean }>
@@ -693,29 +688,25 @@ describe("classify_bank_transactions", () => {
   });
 
   it("saas without history becomes review_only", async () => {
-    vi.mocked(client.getAllPages).mockImplementation(async (path: string) => {
-      if (path === "/v1/transactions") {
-        return [
-          projectTx({
-            id: 1,
-            bank_account_name: "Unknown SaaS",
-            clients_id: null,
-            amount: 15,
-          }),
-          projectTx({
-            id: 2,
-            bank_account_name: "Unknown SaaS",
-            clients_id: null,
-            amount: 15,
-            date: "2025-05-01",
-          }),
-        ];
-      }
-      if (path === "/v1/sale_invoices" || path === "/v1/purchase_invoices") {
-        return [];
-      }
-      return [];
-    });
+    mockTransactionLists(
+      client,
+      [
+        projectTx({
+          id: 1,
+          bank_account_name: "Unknown SaaS",
+          clients_id: null,
+          amount: 15,
+        }),
+        projectTx({
+          id: 2,
+          bank_account_name: "Unknown SaaS",
+          clients_id: null,
+          amount: 15,
+          date: "2025-05-01",
+        }),
+      ],
+      [],
+    );
     const result = parsed(await tools.classify_bank_transactions.handler({}));
     const g = (result.groups as Array<{ apply_mode: string; category: string }>)[0];
     expect(g.category).toBe("saas_subscriptions");

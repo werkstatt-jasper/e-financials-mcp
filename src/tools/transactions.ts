@@ -2,11 +2,21 @@ import { z } from "zod";
 import { createVerifiedTransaction } from "../banking/create-verified-transaction.js";
 import { errorMessage } from "../banking/errors.js";
 import {
+  getIncomingPage,
+  labelFetchedRows,
+  loadLabelledTransactions,
+  pageOf,
+  storedDirection,
+  type TransactionListFilter,
+  type TransactionPage,
+  toolTypeForDirection,
+} from "../banking/stored-direction.js";
+import {
   directionFromToolType,
+  reportedMessages,
   rikMessages,
   rikTypeForToolType,
-  savedDirectionFromMessages,
-  withToolTransactionType,
+  type TransactionDirection,
 } from "../banking/transaction-direction.js";
 import type { EFinancialsClient } from "../client.js";
 import { roundMoney } from "../money.js";
@@ -172,7 +182,7 @@ export function createTransactionTools(client: EFinancialsClient) {
             type: "string",
             enum: ["C", "D"],
             description:
-              "Filter by direction: C = money in, D = money out. The query sent to RIK uses the opposite letter. Rows returned for this filter are labeled with the direction you asked for. Without a type filter, RIK's own type field is returned and is not reliable.",
+              "Filter by direction: C = money in, D = money out. Every returned row's type is its stored direction in the same convention (RIK's own GET type field is always C). D is filtered and paged locally, 100 rows per page.",
           },
           clients_id: {
             type: "number",
@@ -186,31 +196,37 @@ export function createTransactionTools(client: EFinancialsClient) {
       },
       handler: async (params: unknown) => {
         const args = parseToolArgs(listTransactionsSchema, params) as ListTransactionsParams;
-        const response = await client.get<Transaction>("/v1/transactions", {
+        const filter: TransactionListFilter = {
           status: args.status,
           modified_since: args.modified_since,
           start_date: args.start_date,
           end_date: args.end_date,
-          type: args.type === undefined ? undefined : rikTypeForToolType(args.type),
           clients_id: args.clients_id,
-          page: args.page,
-        });
-        const items = (response.items || []).map((item) =>
-          args.type === undefined ? withToolTransactionType(item) : { ...item, type: args.type },
-        );
+        };
+        let page: TransactionPage;
+        if (args.type === "C") {
+          page = await getIncomingPage(client, filter, args.page);
+        } else if (args.type === "D") {
+          const outgoing = (await loadLabelledTransactions(client, filter)).filter(
+            (t) => t.type === "D",
+          );
+          page = pageOf(outgoing, args.page ?? 1);
+        } else {
+          const response = await client.get<Transaction>("/v1/transactions", {
+            ...filter,
+            page: args.page,
+          });
+          page = {
+            items: await labelFetchedRows(client, response.items || [], filter),
+            current_page: response.current_page || 1,
+            total_pages: response.total_pages || 1,
+          };
+        }
         return {
           content: [
             {
               type: "text" as const,
-              text: JSON.stringify(
-                {
-                  items,
-                  current_page: response.current_page || 1,
-                  total_pages: response.total_pages || 1,
-                },
-                null,
-                2,
-              ),
+              text: JSON.stringify(page, null, 2),
             },
           ],
         };
@@ -219,7 +235,7 @@ export function createTransactionTools(client: EFinancialsClient) {
 
     get_transaction: {
       description:
-        "Get a bank transaction by ID. The returned type uses the tool contract (C = money in, D = money out), translated from RIK's stored letter. A GET that returns C for every row cannot be repaired. The JSON may include read-only items[] relation rows (relation_table, relation_id, amount, accounts_id). To add relations and confirm, use register_transaction with a full distributions array — the API does not support incremental draft rows.",
+        "Get a bank transaction by ID. The returned type is the stored direction (C = money in, D = money out), looked up with RIK's list filter because RIK's own GET type field is always C. The JSON may include read-only items[] relation rows (relation_table, relation_id, amount, accounts_id). To add relations and confirm, use register_transaction with a full distributions array — the API does not support incremental draft rows.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -232,12 +248,13 @@ export function createTransactionTools(client: EFinancialsClient) {
       },
       handler: async (params: unknown) => {
         const args = parseToolArgs(transactionIdSchema, params);
-        const response = await client.get<Transaction>(`/v1/transactions/${args.id}`);
+        const response = (await client.get(`/v1/transactions/${args.id}`)) as Transaction;
+        const direction = await storedDirection(client, args.id, String(response.date));
         return {
           content: [
             {
               type: "text" as const,
-              text: JSON.stringify(withToolTransactionType(response as object), null, 2),
+              text: JSON.stringify({ ...response, type: toolTypeForDirection(direction) }, null, 2),
             },
           ],
         };
@@ -254,7 +271,7 @@ export function createTransactionTools(client: EFinancialsClient) {
             type: "string",
             enum: ["C", "D"],
             description:
-              "Filter by direction: C = money in, D = money out. The query sent to RIK uses the opposite letter. If not specified, returns both.",
+              "Filter by direction: C = money in, D = money out. Each row's type is its stored direction. If not specified, returns both.",
           },
           start_date: {
             type: "string",
@@ -268,17 +285,14 @@ export function createTransactionTools(client: EFinancialsClient) {
       },
       handler: async (params: unknown) => {
         const args = parseToolArgs(unprocessedTransactionsSchema, params);
-        const response = await client.get<Transaction>("/v1/transactions", {
+        const drafts = await loadLabelledTransactions(client, {
           status: "PROJECT",
-          type: args.type === undefined ? undefined : rikTypeForToolType(args.type),
           start_date: args.start_date,
           end_date: args.end_date,
         });
-        const unprocessed = (response.items || [])
-          .map((item) =>
-            args.type === undefined ? withToolTransactionType(item) : { ...item, type: args.type },
-          )
-          .filter((t) => !t.clients_id);
+        const unprocessed = drafts.filter(
+          (t) => (args.type === undefined || t.type === args.type) && !t.clients_id,
+        );
         return {
           content: [
             {
@@ -299,7 +313,7 @@ export function createTransactionTools(client: EFinancialsClient) {
 
     update_transaction: {
       description:
-        "Update a PROJECT draft: clients_id, accounts_id, description, and optional type (C = money in, D = money out). type is translated to RIK's opposite letter. A save message that names the other direction is an error and the row is left as RIK saved it. An empty or unrecognized message still applies the update with direction_confirmed false. Does not add or change distribution/relation rows — that is register_transaction (e-arveldaja UI: Add a row under transaction relations, then Save and confirm). Set clients_id before register when missing; the API often rejects confirmation with buyer/supplier missing.",
+        "Update a PROJECT draft: clients_id, accounts_id, description, and optional type (C = money in, D = money out). type is translated to RIK's opposite letter, then the stored direction is checked. If RIK still stores the other direction, that is an error and the row is left as RIK saved it. If the check itself fails, the update stands with direction_confirmed false. Does not add or change distribution/relation rows — that is register_transaction (e-arveldaja UI: Add a row under transaction relations, then Save and confirm). Set clients_id before register when missing; the API often rejects confirmation with buyer/supplier missing.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -323,7 +337,7 @@ export function createTransactionTools(client: EFinancialsClient) {
             type: "string",
             enum: ["C", "D"],
             description:
-              "Direction on a PROJECT draft: C = money in, D = money out. RIK stores the opposite letter; the save message must confirm the direction.",
+              "Direction on a PROJECT draft: C = money in, D = money out. RIK stores the opposite letter; the stored direction is checked after the update.",
           },
         },
         required: ["id"],
@@ -338,12 +352,19 @@ export function createTransactionTools(client: EFinancialsClient) {
         if (type !== undefined) body.type = rikTypeForToolType(type);
         const response = await client.patch<Transaction>(`/v1/transactions/${id}`, body);
         const messages = rikMessages(response);
-        const saved = type === undefined ? undefined : savedDirectionFromMessages(messages);
-        if (type !== undefined && saved !== "unknown" && saved !== directionFromToolType(type)) {
-          const reported = messages.join("; ");
-          throw new Error(
-            `Transaction ${id} was updated, but RIK did not confirm type ${type} (${directionFromToolType(type)}). RIK reported: ${reported}.`,
-          );
+        let stored: TransactionDirection | undefined;
+        if (type !== undefined) {
+          try {
+            const row = (await client.get(`/v1/transactions/${id}`)) as Transaction;
+            stored = await storedDirection(client, id, String(row.date));
+          } catch {
+            stored = undefined;
+          }
+          if (stored !== undefined && stored !== directionFromToolType(type)) {
+            throw new Error(
+              `Transaction ${id} was updated, but RIK still stores it as ${stored}, not type ${type} (${directionFromToolType(type)}).${reportedMessages(messages)}`,
+            );
+          }
         }
         return {
           content: [
@@ -358,7 +379,7 @@ export function createTransactionTools(client: EFinancialsClient) {
                     : {
                         type,
                         rik_messages: messages,
-                        direction_confirmed: saved === directionFromToolType(type),
+                        direction_confirmed: stored === directionFromToolType(type),
                       }),
                   response,
                 },
@@ -373,7 +394,7 @@ export function createTransactionTools(client: EFinancialsClient) {
 
     create_transaction: {
       description:
-        "Create a bank transaction draft (PROJECT). type C is money in and type D is money out. RIK stores the opposite letter (D incoming, C outgoing); this tool translates it. The result is the stored transaction with tool type, rik_messages, and direction_confirmed, not RIK's raw { code, messages, created_object_id }. The draft is deleted only when the save message names the other direction. An empty or unrecognized message keeps the draft with direction_confirmed false. Writable fields: accounts_dimensions_id, type, amount, cl_currencies_id, date (YYYY-MM-DD), and optional clients_id, description, ref_number, bank_account_name, base_amount, currency_rate, transactions_files_id, export_format. To pay a confirmed purchase invoice, use pay_purchase_invoice.",
+        "Create a bank transaction draft (PROJECT). type C is money in and type D is money out. RIK stores the opposite letter (D incoming, C outgoing); this tool translates it and checks the stored direction. The result is the stored transaction with tool type, rik_messages, and direction_confirmed, not RIK's raw { code, messages, created_object_id }. If RIK stored the other direction, the draft is patched once and deleted if still wrong. If the check itself fails, the draft is kept with direction_confirmed false. Writable fields: accounts_dimensions_id, type, amount, cl_currencies_id, date (YYYY-MM-DD), and optional clients_id, description, ref_number, bank_account_name, base_amount, currency_rate, transactions_files_id, export_format. To pay a confirmed purchase invoice, use pay_purchase_invoice.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -385,7 +406,7 @@ export function createTransactionTools(client: EFinancialsClient) {
             type: "string",
             enum: ["C", "D"],
             description:
-              "C = money in, D = money out. RIK stores the opposite letter; the returned type is the direction you asked for after the save message is checked.",
+              "C = money in, D = money out. RIK stores the opposite letter; the returned type is the direction you asked for after the stored direction is checked.",
           },
           amount: { type: "number", description: "Transaction amount" },
           cl_currencies_id: {
@@ -459,7 +480,7 @@ export function createTransactionTools(client: EFinancialsClient) {
 
     pay_purchase_invoice: {
       description:
-        'Mark a CONFIRMED purchase invoice paid from a cash or bank dimension (for example account 1360, Arveldused aruandvate isikutega). Creates an outgoing transaction (type D, money out) and registers it against the invoice, which is the API form of the e-arveldaja posting "Ostuarve nr … tasumine". registered: true means the payment is registered; do not call again if the invoice could not be re-read. Amount defaults to the invoice gross price when the invoice is unpaid, and must not exceed that gross price. The API does not report the unpaid remainder, so a second partial payment can still exceed what remains. A PARTIALLY_PAID invoice requires amount. A non-EUR invoice sends currency_rate and a base_amount scaled from base_gross_price; pass currency_rate when the invoice has none. Refuses before any write when the supplier already has a PROJECT draft with the same amount, or the invoice already has a CONFIRMED payment with the same amount and date; pass allow_duplicate=true to pay anyway. When RIK\'s save message does not confirm an outgoing payment, the draft is kept but not registered (registered: false with its transaction_id). If registration fails, the draft is deleted.',
+        'Mark a CONFIRMED purchase invoice paid from a cash or bank dimension (for example account 1360, Arveldused aruandvate isikutega). Creates an outgoing transaction (type D, money out) and registers it against the invoice, which is the API form of the e-arveldaja posting "Ostuarve nr … tasumine". registered: true means the payment is registered; do not call again if the invoice could not be re-read. Amount defaults to the invoice gross price when the invoice is unpaid, and must not exceed that gross price. The API does not report the unpaid remainder, so a second partial payment can still exceed what remains. A PARTIALLY_PAID invoice requires amount. A non-EUR invoice sends currency_rate and a base_amount scaled from base_gross_price; pass currency_rate when the invoice has none. Refuses before any write when the supplier already has a PROJECT draft with the same amount, or the invoice already has a CONFIRMED payment with the same amount and date; pass allow_duplicate=true to pay anyway. When the stored direction cannot be confirmed as outgoing, the draft is kept but not registered (registered: false with its transaction_id). If registration fails, the draft is deleted.',
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -596,7 +617,7 @@ export function createTransactionTools(client: EFinancialsClient) {
                   {
                     registered: false,
                     transaction_id: created.id,
-                    message: `RIK's save message did not confirm an outgoing payment, so draft ${created.id} was not registered against purchase invoice ${args.purchase_invoices_id}. Check in e-Financials that it is an outgoing payment, then register it with register_transaction, or delete it with delete_transaction.`,
+                    message: `The stored direction of draft ${created.id} could not be confirmed as outgoing, so it was not registered against purchase invoice ${args.purchase_invoices_id}. Check in e-Financials that it is an outgoing payment, then register it with register_transaction, or delete it with delete_transaction.`,
                     type: created.type,
                     amount,
                     direction_confirmed: false,

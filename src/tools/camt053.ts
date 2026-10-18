@@ -10,12 +10,11 @@ import {
 import { type CamtEntry, parseCamt053 } from "../banking/camt053-parser.js";
 import { createVerifiedTransaction } from "../banking/create-verified-transaction.js";
 import { errorMessage } from "../banking/errors.js";
-import { withToolTransactionType } from "../banking/transaction-direction.js";
+import { loadLabelledTransactions } from "../banking/stored-direction.js";
 import type { EFinancialsClient } from "../client.js";
 import { resolveFileInput } from "../resolve-file-input.js";
 import type { AccountDimension } from "../types/accounts.js";
 import type { Client } from "../types/clients.js";
-import type { Transaction } from "../types/transaction.js";
 import { optionalYmd, parseToolArgs, positiveInt } from "../validation/tool-args.js";
 
 const camt053Schema = z.object({
@@ -131,7 +130,7 @@ export function createCamt053Tools(client: EFinancialsClient) {
   return {
     process_camt053: {
       description:
-        "Import an ISO 20022 CAMT.053 bank statement (LHV, Swedbank, SEB, Coop, Luminor). Modes: parse (read-only), dry_run (default for import; no writes), execute (create PROJECT transactions). file_path is a filesystem path or base64:/base64:xml: payload. dry_run/execute require accounts_dimensions_id. Duplicate detection uses bank reference (and a description marker when the API drops dedicated fields). Each created row carries direction_confirmed; rows where RIK's save message did not confirm the direction are kept and counted in summary.direction_unconfirmed_count, so check them before registering. Pro-tier batch write.",
+        "Import an ISO 20022 CAMT.053 bank statement (LHV, Swedbank, SEB, Coop, Luminor). Modes: parse (read-only), dry_run (default for import; no writes), execute (create PROJECT transactions). file_path is a filesystem path or base64:/base64:xml: payload. dry_run/execute require accounts_dimensions_id. Duplicate detection uses bank reference (and a description marker when the API drops dedicated fields). Each created row carries direction_confirmed; rows whose stored direction could not be checked are kept and counted in summary.direction_unconfirmed_count, so check them before registering. Pro-tier batch write.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -170,13 +169,11 @@ export function createCamt053Tools(client: EFinancialsClient) {
         );
 
         const existing = (
-          await client.getAllPages<Transaction>("/v1/transactions", {
+          await loadLabelledTransactions(client, {
             start_date: args.date_from,
             end_date: args.date_to,
           })
-        )
-          .filter((t) => t.status !== "VOID" && t.is_deleted !== true)
-          .map((t) => withToolTransactionType(t));
+        ).filter((t) => t.status !== "VOID" && t.is_deleted !== true);
 
         if (mode === "parse") {
           const index = buildDuplicateIndex(existing, eligible);

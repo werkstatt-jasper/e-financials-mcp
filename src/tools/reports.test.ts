@@ -4,7 +4,7 @@ import invoicesFixture from "../__fixtures__/invoices.json" with { type: "json" 
 import transactionsFixture from "../__fixtures__/transactions.json" with { type: "json" };
 import type { EFinancialsClient } from "../client.js";
 import { createReportTools } from "./reports.js";
-import { createMockClient, parseToolJson } from "./test-helpers.js";
+import { createMockClient, mockTransactionLists, parseToolJson } from "./test-helpers.js";
 
 describe("report tools", () => {
   let client: EFinancialsClient;
@@ -12,27 +12,28 @@ describe("report tools", () => {
 
   beforeEach(() => {
     client = createMockClient();
+    vi.mocked(client.getAllPages).mockResolvedValue([] as never);
     tools = createReportTools(client);
   });
 
-  it("reconciliation_report aggregates three GET responses", async () => {
+  it("reconciliation_report aggregates transactions by stored direction", async () => {
+    mockTransactionLists(
+      client,
+      [
+        ...transactionsFixture.reconciliation_list.items,
+        {
+          id: 2,
+          type: "C",
+          amount: 25,
+          status: "CONFIRMED",
+          clients_id: 1,
+          date: "2025-06-02",
+          description: "Out",
+        },
+      ],
+      [1],
+    );
     vi.mocked(client.get).mockImplementation(async (path: string) => {
-      if (path === "/v1/transactions") {
-        return {
-          items: [
-            ...transactionsFixture.reconciliation_list.items,
-            {
-              id: 2,
-              type: "C",
-              amount: 25,
-              status: "CONFIRMED",
-              clients_id: 1,
-              date: "2025-06-02",
-              description: "Out",
-            },
-          ],
-        } as never;
-      }
       if (path === "/v1/sale_invoices") {
         return { ...invoicesFixture.reconciliation_sales_list } as never;
       }
@@ -47,10 +48,15 @@ describe("report tools", () => {
       end_date: "2025-06-30",
     });
 
-    expect(client.get).toHaveBeenCalledWith(
-      "/v1/transactions",
-      expect.objectContaining({ start_date: "2025-06-01", end_date: "2025-06-30" }),
-    );
+    expect(client.getAllPages).toHaveBeenCalledWith("/v1/transactions", {
+      start_date: "2025-06-01",
+      end_date: "2025-06-30",
+    });
+    expect(client.getAllPages).toHaveBeenCalledWith("/v1/transactions", {
+      start_date: "2025-06-01",
+      end_date: "2025-06-30",
+      type: "D",
+    });
     expect(client.get).toHaveBeenCalledWith(
       "/v1/sale_invoices",
       expect.objectContaining({ start_date: "2025-06-01", end_date: "2025-06-30" }),
@@ -73,9 +79,6 @@ describe("report tools", () => {
 
   it("reconciliation_report coalesces null items arrays from API", async () => {
     vi.mocked(client.get).mockImplementation(async (path: string) => {
-      if (path === "/v1/transactions") {
-        return { items: null } as never;
-      }
       if (path === "/v1/sale_invoices") {
         return { items: null } as never;
       }
@@ -91,9 +94,6 @@ describe("report tools", () => {
 
   it("reconciliation_report includes unpaid purchase action items", async () => {
     vi.mocked(client.get).mockImplementation(async (path: string) => {
-      if (path === "/v1/transactions") {
-        return { items: [] } as never;
-      }
       if (path === "/v1/sale_invoices") {
         return { items: [] } as never;
       }
@@ -127,7 +127,9 @@ describe("report tools", () => {
 
     await tools.financial_summary.handler({ month: "2024-03" });
 
-    const txCall = vi.mocked(client.get).mock.calls.find((c) => c[0] === "/v1/transactions");
+    const txCall = vi
+      .mocked(client.getAllPages)
+      .mock.calls.find((c) => c[0] === "/v1/transactions");
     expect(txCall).toBeDefined();
     const params = txCall?.[1] as { start_date: string; end_date: string };
     expect(params.start_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
@@ -140,9 +142,6 @@ describe("report tools", () => {
 
   it("financial_summary sums gross_price from live API items and never emits null", async () => {
     vi.mocked(client.get).mockImplementation(async (path: string) => {
-      if (path === "/v1/transactions") {
-        return { items: [] } as never;
-      }
       if (path === "/v1/sale_invoices") {
         // Live API items: gross_price, no total_amount / invoice_date
         return {
@@ -186,9 +185,6 @@ describe("report tools", () => {
 
   it("reconciliation_report maps live API fields into action items", async () => {
     vi.mocked(client.get).mockImplementation(async (path: string) => {
-      if (path === "/v1/transactions") {
-        return { items: [] } as never;
-      }
       if (path === "/v1/sale_invoices") {
         return {
           items: [
@@ -287,10 +283,8 @@ describe("report tools", () => {
   it("financial_summary defaults to current month and aggregates totals", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2025-06-15T12:00:00.000Z"));
+    mockTransactionLists(client, transactionsFixture.summary_txns.items, [1]);
     vi.mocked(client.get).mockImplementation(async (path: string) => {
-      if (path === "/v1/transactions") {
-        return { ...transactionsFixture.summary_txns } as never;
-      }
       if (path === "/v1/sale_invoices") {
         return { ...invoicesFixture.summary_sales } as never;
       }

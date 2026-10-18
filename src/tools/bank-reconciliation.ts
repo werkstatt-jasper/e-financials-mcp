@@ -19,7 +19,8 @@ import {
   rankInvoiceMatches,
 } from "../banking/invoice-index.js";
 import { buildInvoiceDistribution } from "../banking/match-score.js";
-import { rikTypeForToolType, withToolTransactionType } from "../banking/transaction-direction.js";
+import { loadLabelledTransactions } from "../banking/stored-direction.js";
+import { rikTypeForToolType } from "../banking/transaction-direction.js";
 import type { EFinancialsClient } from "../client.js";
 import type { AccountDimension, BankAccounts } from "../types/accounts.js";
 import type { Client } from "../types/clients.js";
@@ -46,25 +47,23 @@ async function loadProjectTransactions(
     end_date?: string;
   },
 ): Promise<Transaction[]> {
-  const all = await client.getAllPages<Transaction>("/v1/transactions", {
+  const all = await loadLabelledTransactions(client, {
     status: "PROJECT",
     start_date: opts.start_date,
     end_date: opts.end_date,
   });
-  return all
-    .filter((t) => {
-      if (!isProjectTransaction(t)) {
-        return false;
-      }
-      if (
-        opts.accounts_dimensions_id != null &&
-        t.accounts_dimensions_id !== opts.accounts_dimensions_id
-      ) {
-        return false;
-      }
-      return true;
-    })
-    .map((t) => withToolTransactionType(t));
+  return all.filter((t) => {
+    if (!isProjectTransaction(t)) {
+      return false;
+    }
+    if (
+      opts.accounts_dimensions_id != null &&
+      t.accounts_dimensions_id !== opts.accounts_dimensions_id
+    ) {
+      return false;
+    }
+    return true;
+  });
 }
 
 async function loadOpenInvoices(client: EFinancialsClient): Promise<{

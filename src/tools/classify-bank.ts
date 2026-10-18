@@ -13,8 +13,8 @@ import {
   candidateInvoicesForTransaction,
   rankInvoiceMatches,
 } from "../banking/invoice-index.js";
+import { loadLabelledTransactions } from "../banking/stored-direction.js";
 import { suggestBookingFromHistory } from "../banking/supplier-history.js";
-import { withToolTransactionType } from "../banking/transaction-direction.js";
 import type { EFinancialsClient } from "../client.js";
 import { createPurchaseInvoiceWithRepair } from "../invoices/create-purchase-invoice.js";
 import { registerPurchaseInvoiceWithRepair } from "../invoices/register-purchase-invoice.js";
@@ -40,25 +40,23 @@ async function loadProjectTransactions(
     end_date?: string;
   },
 ): Promise<Transaction[]> {
-  const all = await client.getAllPages<Transaction>("/v1/transactions", {
+  const all = await loadLabelledTransactions(client, {
     status: "PROJECT",
     start_date: opts.start_date,
     end_date: opts.end_date,
   });
-  return all
-    .filter((t) => {
-      if (!isProjectTransaction(t)) {
-        return false;
-      }
-      if (
-        opts.accounts_dimensions_id != null &&
-        t.accounts_dimensions_id !== opts.accounts_dimensions_id
-      ) {
-        return false;
-      }
-      return true;
-    })
-    .map((t) => withToolTransactionType(t));
+  return all.filter((t) => {
+    if (!isProjectTransaction(t)) {
+      return false;
+    }
+    if (
+      opts.accounts_dimensions_id != null &&
+      t.accounts_dimensions_id !== opts.accounts_dimensions_id
+    ) {
+      return false;
+    }
+    return true;
+  });
 }
 
 const classifySchema = z.object({

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { withToolTransactionType } from "../banking/transaction-direction.js";
+import { loadLabelledTransactions } from "../banking/stored-direction.js";
 import type { EFinancialsClient } from "../client.js";
 import type { Client } from "../types/clients.js";
 import type { PurchaseInvoice, SalesInvoice } from "../types/invoice.js";
@@ -88,8 +88,8 @@ export function createReportTools(client: EFinancialsClient) {
       handler: async (params: unknown) => {
         const args = parseToolArgs(reconciliationReportSchema, params);
         // Fetch all relevant data
-        const [transactionsRes, salesRes, purchaseRes] = await Promise.all([
-          client.get<Transaction>("/v1/transactions", {
+        const [transactions, salesRes, purchaseRes] = await Promise.all([
+          loadLabelledTransactions(client, {
             start_date: args.start_date,
             end_date: args.end_date,
           }),
@@ -103,7 +103,6 @@ export function createReportTools(client: EFinancialsClient) {
           }),
         ]);
 
-        const transactions = (transactionsRes.items || []).map(withToolTransactionType);
         const salesInvoices = salesRes.items || [];
         const purchaseInvoices = purchaseRes.items || [];
 
@@ -314,8 +313,8 @@ export function createReportTools(client: EFinancialsClient) {
         const startDate = new Date(Date.UTC(year, month, 1)).toISOString().split("T")[0];
         const endDate = new Date(Date.UTC(year, month + 1, 0)).toISOString().split("T")[0];
 
-        const [transactionsRes, salesRes, purchaseRes] = await Promise.all([
-          client.get<Transaction>("/v1/transactions", {
+        const [transactions, salesRes, purchaseRes] = await Promise.all([
+          loadLabelledTransactions(client, {
             start_date: startDate,
             end_date: endDate,
           }),
@@ -329,7 +328,6 @@ export function createReportTools(client: EFinancialsClient) {
           }),
         ]);
 
-        const transactions = (transactionsRes.items || []).map(withToolTransactionType);
         const salesInvoices = salesRes.items || [];
         const purchaseInvoices = purchaseRes.items || [];
 
