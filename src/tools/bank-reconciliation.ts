@@ -19,6 +19,7 @@ import {
   rankInvoiceMatches,
 } from "../banking/invoice-index.js";
 import { buildInvoiceDistribution } from "../banking/match-score.js";
+import { rikTypeForToolType, withToolTransactionType } from "../banking/transaction-direction.js";
 import type { EFinancialsClient } from "../client.js";
 import type { AccountDimension, BankAccounts } from "../types/accounts.js";
 import type { Client } from "../types/clients.js";
@@ -50,18 +51,20 @@ async function loadProjectTransactions(
     start_date: opts.start_date,
     end_date: opts.end_date,
   });
-  return all.filter((t) => {
-    if (!isProjectTransaction(t)) {
-      return false;
-    }
-    if (
-      opts.accounts_dimensions_id != null &&
-      t.accounts_dimensions_id !== opts.accounts_dimensions_id
-    ) {
-      return false;
-    }
-    return true;
-  });
+  return all
+    .filter((t) => {
+      if (!isProjectTransaction(t)) {
+        return false;
+      }
+      if (
+        opts.accounts_dimensions_id != null &&
+        t.accounts_dimensions_id !== opts.accounts_dimensions_id
+      ) {
+        return false;
+      }
+      return true;
+    })
+    .map((t) => withToolTransactionType(t));
 }
 
 async function loadOpenInvoices(client: EFinancialsClient): Promise<{
@@ -163,7 +166,7 @@ export function createBankReconciliationTools(client: EFinancialsClient) {
                 p.accounts_dimensions_id === tx.accounts_dimensions_id &&
                 Math.abs(p.amount - Math.abs(tx.amount)) < 0.02 &&
                 j.effective_date === tx.date &&
-                (p.type === tx.type || !p.type),
+                (p.type === rikTypeForToolType(tx.type) || !p.type),
             );
           });
           if (dupKeyCandidates.length > 0) {

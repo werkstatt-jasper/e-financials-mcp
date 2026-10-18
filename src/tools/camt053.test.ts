@@ -93,7 +93,7 @@ function existingTx(overrides: Partial<Transaction> = {}): Transaction {
     bank_accounts_id: 1,
     bank_ref_number: "EXISTING",
     bank_subtype: "",
-    type: "C",
+    type: "D",
     bank_account_no: null,
     bank_account_name: null,
     ref_number: null,

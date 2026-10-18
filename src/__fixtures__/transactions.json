@@ -37,7 +37,7 @@
     "items": [
       {
         "id": 1,
-        "type": "C",
+        "type": "D",
         "amount": 100,
         "status": "PROJECT",
         "clients_id": null,
@@ -74,7 +74,7 @@
     "items": [
       {
         "id": 1,
-        "type": "C",
+        "type": "D",
         "amount": 100,
         "status": "CONFIRMED",
         "clients_id": 1,
@@ -82,7 +82,7 @@
       },
       {
         "id": 2,
-        "type": "D",
+        "type": "C",
         "amount": 40,
         "status": "PROJECT",
         "clients_id": null,

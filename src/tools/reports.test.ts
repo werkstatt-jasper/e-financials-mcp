@@ -23,7 +23,7 @@ describe("report tools", () => {
             ...transactionsFixture.reconciliation_list.items,
             {
               id: 2,
-              type: "D",
+              type: "C",
               amount: 25,
               status: "CONFIRMED",
               clients_id: 1,

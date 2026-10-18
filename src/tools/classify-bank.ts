@@ -14,6 +14,7 @@ import {
   rankInvoiceMatches,
 } from "../banking/invoice-index.js";
 import { suggestBookingFromHistory } from "../banking/supplier-history.js";
+import { withToolTransactionType } from "../banking/transaction-direction.js";
 import type { EFinancialsClient } from "../client.js";
 import { createPurchaseInvoiceWithRepair } from "../invoices/create-purchase-invoice.js";
 import { registerPurchaseInvoiceWithRepair } from "../invoices/register-purchase-invoice.js";
@@ -44,18 +45,20 @@ async function loadProjectTransactions(
     start_date: opts.start_date,
     end_date: opts.end_date,
   });
-  return all.filter((t) => {
-    if (!isProjectTransaction(t)) {
-      return false;
-    }
-    if (
-      opts.accounts_dimensions_id != null &&
-      t.accounts_dimensions_id !== opts.accounts_dimensions_id
-    ) {
-      return false;
-    }
-    return true;
-  });
+  return all
+    .filter((t) => {
+      if (!isProjectTransaction(t)) {
+        return false;
+      }
+      if (
+        opts.accounts_dimensions_id != null &&
+        t.accounts_dimensions_id !== opts.accounts_dimensions_id
+      ) {
+        return false;
+      }
+      return true;
+    })
+    .map((t) => withToolTransactionType(t));
 }
 
 const classifySchema = z.object({

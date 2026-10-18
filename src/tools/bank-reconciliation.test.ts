@@ -40,21 +40,21 @@ describe("bank reconciliation tools", () => {
         return [
           projectTx({
             id: 1,
-            type: "C",
+            type: "D",
             amount: 100,
             ref_number: "R1",
             bank_account_name: "Buyer Co",
           }),
           projectTx({
             id: 2,
-            type: "D",
+            type: "C",
             amount: 5,
             description: "Monthly bank fee",
             accounts_dimensions_id: 10,
           }),
           projectTx({
             id: 3,
-            type: "D",
+            type: "C",
             amount: 50,
             bank_account_no: "EE22",
             accounts_dimensions_id: 10,
@@ -146,7 +146,7 @@ describe("bank reconciliation tools", () => {
         return [
           projectTx({
             id: 1,
-            type: "C",
+            type: "D",
             amount: 100,
             ref_number: "S",
             clients_id: 1,
@@ -154,7 +154,7 @@ describe("bank reconciliation tools", () => {
           }),
           projectTx({
             id: 2,
-            type: "C",
+            type: "D",
             amount: 100,
             ref_number: "S",
             clients_id: 1,
@@ -162,7 +162,7 @@ describe("bank reconciliation tools", () => {
           }),
           projectTx({
             id: 3,
-            type: "C",
+            type: "D",
             amount: 110,
             base_amount: 100,
             ref_number: "FX",
@@ -350,7 +350,7 @@ describe("bank reconciliation tools", () => {
         return [
           projectTx({
             id: 1,
-            type: "C",
+            type: "D",
             amount: 100,
             ref_number: "R1",
             clients_id: 7,
@@ -411,7 +411,7 @@ describe("bank reconciliation tools", () => {
   it("auto_confirm skips ambiguous invoice candidates", async () => {
     vi.mocked(client.getAllPages).mockImplementation(async (path: string) => {
       if (path === "/v1/transactions") {
-        return [projectTx({ id: 1, type: "C", amount: 100, ref_number: "SAME", clients_id: 1 })];
+        return [projectTx({ id: 1, type: "D", amount: 100, ref_number: "SAME", clients_id: 1 })];
       }
       if (path === "/v1/sale_invoices") {
         return [
@@ -461,15 +461,16 @@ describe("bank reconciliation tools", () => {
         return [
           projectTx({
             id: 11,
-            type: "D",
+            type: "C",
             amount: 80,
             accounts_dimensions_id: 10,
             bank_account_no: "EE22",
             date: "2025-06-01",
+            clients_id: 7,
           }),
           projectTx({
             id: 12,
-            type: "C",
+            type: "D",
             amount: 80,
             accounts_dimensions_id: 20,
             bank_account_no: "EE11",
@@ -651,13 +652,13 @@ describe("bank reconciliation tools", () => {
         return [
           projectTx({
             id: 1,
-            type: "C",
+            type: "D",
             amount: 100,
             ref_number: "P1",
             clients_id: 9,
             bank_account_name: "Partial Client",
           }),
-          projectTx({ id: 2, type: "C", amount: 200, ref_number: "P2", clients_id: 9 }),
+          projectTx({ id: 2, type: "D", amount: 200, ref_number: "P2", clients_id: 9 }),
         ];
       }
       if (path === "/v1/sale_invoices") {
@@ -707,7 +708,7 @@ describe("bank reconciliation tools", () => {
         return [
           projectTx({
             id: 11,
-            type: "D",
+            type: "C",
             amount: 80,
             accounts_dimensions_id: 10,
             bank_account_no: "EE22",
@@ -716,7 +717,7 @@ describe("bank reconciliation tools", () => {
           }),
           projectTx({
             id: 12,
-            type: "C",
+            type: "D",
             amount: 80,
             accounts_dimensions_id: 20,
             bank_account_no: "EE11",

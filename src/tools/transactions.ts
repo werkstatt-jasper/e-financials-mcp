@@ -3,11 +3,13 @@ import { createVerifiedTransaction } from "../banking/create-verified-transactio
 import { errorMessage } from "../banking/errors.js";
 import {
   directionFromToolType,
-  messageMatchesDirection,
   rikMessages,
   rikTypeForToolType,
+  savedDirectionFromMessages,
+  withToolTransactionType,
 } from "../banking/transaction-direction.js";
 import type { EFinancialsClient } from "../client.js";
+import { roundMoney } from "../money.js";
 import { resolveFileInput } from "../resolve-file-input.js";
 import type { PurchaseInvoice } from "../types/invoice.js";
 import type { ApiFile } from "../types/journal.js";
@@ -66,6 +68,7 @@ const payPurchaseInvoiceSchema = z.object({
   date: ymdDateString,
   amount: optionalNumber,
   description: optionalString,
+  currency_rate: optionalNumber,
 });
 
 const createTransactionSchema = z.object({
@@ -155,7 +158,7 @@ export function createTransactionTools(client: EFinancialsClient) {
           page: args.page,
         });
         const items = (response.items || []).map((item) =>
-          args.type === undefined ? item : { ...item, type: args.type },
+          args.type === undefined ? withToolTransactionType(item) : { ...item, type: args.type },
         );
         return {
           content: [
@@ -178,7 +181,7 @@ export function createTransactionTools(client: EFinancialsClient) {
 
     get_transaction: {
       description:
-        "Get a bank transaction by ID. Tool direction is C = money in, D = money out, but RIK's GET type currently comes back as C for both directions, so do not use this read to confirm a direction you just wrote. Trust create_transaction or pay_purchase_invoice, which check RIK's save message. The JSON may include read-only items[] relation rows (relation_table, relation_id, amount, accounts_id). To add relations and confirm, use register_transaction with a full distributions array — the API does not support incremental draft rows.",
+        "Get a bank transaction by ID. The returned type uses the tool contract (C = money in, D = money out), translated from RIK's stored letter. A GET that returns C for every row cannot be repaired. The JSON may include read-only items[] relation rows (relation_table, relation_id, amount, accounts_id). To add relations and confirm, use register_transaction with a full distributions array — the API does not support incremental draft rows.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -196,7 +199,7 @@ export function createTransactionTools(client: EFinancialsClient) {
           content: [
             {
               type: "text" as const,
-              text: JSON.stringify(response, null, 2),
+              text: JSON.stringify(withToolTransactionType(response as object), null, 2),
             },
           ],
         };
@@ -234,7 +237,9 @@ export function createTransactionTools(client: EFinancialsClient) {
           end_date: args.end_date,
         });
         const unprocessed = (response.items || [])
-          .map((item) => (args.type === undefined ? item : { ...item, type: args.type }))
+          .map((item) =>
+            args.type === undefined ? withToolTransactionType(item) : { ...item, type: args.type },
+          )
           .filter((t) => !t.clients_id);
         return {
           content: [
@@ -256,7 +261,7 @@ export function createTransactionTools(client: EFinancialsClient) {
 
     update_transaction: {
       description:
-        "Update a PROJECT draft: clients_id, accounts_id, description, and optional type (C = money in, D = money out). type is translated to RIK's opposite letter and kept only when the save message confirms it. Does not add or change distribution/relation rows — that is register_transaction (e-arveldaja UI: Add a row under transaction relations, then Save and confirm). Set clients_id before register when missing; the API often rejects confirmation with buyer/supplier missing.",
+        "Update a PROJECT draft: clients_id, accounts_id, description, and optional type (C = money in, D = money out). type is translated to RIK's opposite letter. A save message that names the other direction is an error and the row is left as RIK saved it. An empty or unrecognized message still applies the update with direction_confirmed false. Does not add or change distribution/relation rows — that is register_transaction (e-arveldaja UI: Add a row under transaction relations, then Save and confirm). Set clients_id before register when missing; the API often rejects confirmation with buyer/supplier missing.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -294,11 +299,10 @@ export function createTransactionTools(client: EFinancialsClient) {
         if (updateData.description !== undefined) body.description = updateData.description;
         if (type !== undefined) body.type = rikTypeForToolType(type);
         const response = await client.patch<Transaction>(`/v1/transactions/${id}`, body);
-        if (
-          type !== undefined &&
-          !messageMatchesDirection(rikMessages(response), directionFromToolType(type))
-        ) {
-          const reported = rikMessages(response).join("; ") || "(no message)";
+        const messages = rikMessages(response);
+        const saved = type === undefined ? undefined : savedDirectionFromMessages(messages);
+        if (type !== undefined && saved !== "unknown" && saved !== directionFromToolType(type)) {
+          const reported = messages.join("; ");
           throw new Error(
             `Transaction ${id} was updated, but RIK did not confirm type ${type} (${directionFromToolType(type)}). RIK reported: ${reported}.`,
           );
@@ -311,7 +315,13 @@ export function createTransactionTools(client: EFinancialsClient) {
                 {
                   success: true,
                   message: `Transaction ${id} updated`,
-                  ...(type === undefined ? {} : { type, rik_messages: rikMessages(response) }),
+                  ...(type === undefined
+                    ? {}
+                    : {
+                        type,
+                        rik_messages: messages,
+                        direction_confirmed: saved === directionFromToolType(type),
+                      }),
                   response,
                 },
                 null,
@@ -325,7 +335,7 @@ export function createTransactionTools(client: EFinancialsClient) {
 
     create_transaction: {
       description:
-        'Create a bank transaction draft (PROJECT). type C is money in and type D is money out. RIK stores the opposite letter (D incoming, C outgoing) and GET type is unreliable, so this tool translates the letter and keeps the draft only when the save message matches ("Incoming payment has been saved" / "Outgoing payment has been saved"). A mismatch deletes the draft and returns an error. The result type is the direction you asked for. Writable fields: accounts_dimensions_id, type, amount, cl_currencies_id, date (YYYY-MM-DD), and optional clients_id, description, ref_number, bank_account_name, base_amount, currency_rate, transactions_files_id, export_format. To pay a confirmed purchase invoice, use pay_purchase_invoice.',
+        "Create a bank transaction draft (PROJECT). type C is money in and type D is money out. RIK stores the opposite letter (D incoming, C outgoing); this tool translates it. The result is the stored transaction with tool type, rik_messages, and direction_confirmed, not RIK's raw { code, messages, created_object_id }. The draft is deleted only when the save message names the other direction. An empty or unrecognized message keeps the draft with direction_confirmed false. Writable fields: accounts_dimensions_id, type, amount, cl_currencies_id, date (YYYY-MM-DD), and optional clients_id, description, ref_number, bank_account_name, base_amount, currency_rate, transactions_files_id, export_format. To pay a confirmed purchase invoice, use pay_purchase_invoice.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -411,7 +421,7 @@ export function createTransactionTools(client: EFinancialsClient) {
 
     pay_purchase_invoice: {
       description:
-        'Mark a CONFIRMED purchase invoice paid from a cash or bank dimension (for example account 1360, Arveldused aruandvate isikutega). Creates an outgoing transaction (type D, money out) and registers it against the invoice, which is the API form of the e-arveldaja posting "Ostuarve nr … tasumine". Amount defaults to the invoice gross price when the invoice is unpaid. A PARTIALLY_PAID invoice requires amount. If registration fails, the draft is deleted.',
+        'Mark a CONFIRMED purchase invoice paid from a cash or bank dimension (for example account 1360, Arveldused aruandvate isikutega). Creates an outgoing transaction (type D, money out) and registers it against the invoice, which is the API form of the e-arveldaja posting "Ostuarve nr … tasumine". A returned transaction_id means the payment is already registered; do not call again if the invoice could not be re-read. Amount defaults to the invoice gross price when the invoice is unpaid, and must not exceed that gross price. The API does not report the unpaid remainder, so a second partial payment can still exceed what remains. A PARTIALLY_PAID invoice requires amount. A non-EUR invoice sends currency_rate and a base_amount scaled from base_gross_price; pass currency_rate when the invoice has none. If registration fails, the draft is deleted.',
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -437,6 +447,11 @@ export function createTransactionTools(client: EFinancialsClient) {
             type: "string",
             description:
               'Optional description. Defaults to "Ostuarve nr {number} tasumine" (max 150 characters).',
+          },
+          currency_rate: {
+            type: "number",
+            description:
+              "Exchange rate to EUR. Required when the invoice is not in EUR and has no currency_rate of its own.",
           },
         },
         required: ["purchase_invoices_id", "accounts_dimensions_id", "date"],
@@ -470,19 +485,48 @@ export function createTransactionTools(client: EFinancialsClient) {
             "amount is required when the purchase invoice has no positive gross price.",
           );
         }
+        if (
+          invoice.gross_price != null &&
+          invoice.gross_price > 0 &&
+          amount > invoice.gross_price
+        ) {
+          throw new Error(
+            `amount is greater than the invoice gross price (${invoice.gross_price}). The API does not report the unpaid remainder of a partly paid invoice.`,
+          );
+        }
         if (!invoice.clients_id) {
           throw new Error(`Purchase invoice ${args.purchase_invoices_id} has no supplier.`);
         }
         const number = invoice.number || invoice.invoice_no || String(args.purchase_invoices_id);
         const description = (args.description ?? `Ostuarve nr ${number} tasumine`).slice(0, 150);
-        const created = await createVerifiedTransaction(client, {
+        const currency = invoice.cl_currencies_id || "EUR";
+        const payment: Record<string, string | number> = {
           accounts_dimensions_id: args.accounts_dimensions_id,
           type: "D",
           amount,
-          cl_currencies_id: invoice.cl_currencies_id || "EUR",
+          cl_currencies_id: currency,
           date: args.date,
           clients_id: invoice.clients_id,
           description,
+        };
+        if (currency !== "EUR") {
+          const invoiceRate = (invoice as { currency_rate?: number | null }).currency_rate;
+          const rate =
+            args.currency_rate ?? (typeof invoiceRate === "number" ? invoiceRate : undefined);
+          if (rate == null || !(rate > 0)) {
+            throw new Error("currency_rate is required when the purchase invoice is not in EUR.");
+          }
+          payment.currency_rate = rate;
+          const gross = invoice.gross_price;
+          const baseGross = invoice.base_gross_price;
+          payment.base_amount =
+            baseGross != null && gross != null && gross > 0
+              ? roundMoney((baseGross * amount) / gross)
+              : roundMoney(amount * rate);
+        }
+        const created = await createVerifiedTransaction(client, {
+          ...payment,
+          type: "D",
         });
         try {
           await client.patch(`/v1/transactions/${created.id}/register`, [
@@ -502,9 +546,15 @@ export function createTransactionTools(client: EFinancialsClient) {
           }
           throw error;
         }
-        const refreshed = (await client.get(
-          `/v1/purchase_invoices/${args.purchase_invoices_id}`,
-        )) as PurchaseInvoice;
+        let refreshedPaymentStatus: string | null = null;
+        try {
+          const refreshed = (await client.get(
+            `/v1/purchase_invoices/${args.purchase_invoices_id}`,
+          )) as PurchaseInvoice;
+          refreshedPaymentStatus = refreshed.payment_status ?? null;
+        } catch {
+          refreshedPaymentStatus = null;
+        }
         return {
           content: [
             {
@@ -514,7 +564,8 @@ export function createTransactionTools(client: EFinancialsClient) {
                   transaction_id: created.id,
                   type: created.type,
                   amount,
-                  payment_status: refreshed.payment_status ?? null,
+                  registered: true,
+                  payment_status: refreshedPaymentStatus,
                   rik_messages: created.rik_messages,
                 },
                 null,
