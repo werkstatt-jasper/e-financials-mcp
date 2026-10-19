@@ -128,6 +128,13 @@ const listAccountsSchema = z.object({
 
 const emptyToolArgs = z.object({});
 
+const listProjectsSchema = z.object({
+  modified_since: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? undefined),
+});
+
 const searchAccountsSchema = z.object({
   query: z.string().min(1),
 });
@@ -331,14 +338,22 @@ export function createAccountTools(client: EFinancialsClient) {
 
     list_projects: {
       description:
-        "List all projects (cost/profit centers). Used for tracking expenses by project.",
+        "List all projects (cost/profit centers). Used for tracking expenses by project. Optional modified_since returns only projects changed since that time.",
       inputSchema: {
         type: "object" as const,
-        properties: {},
+        properties: {
+          modified_since: {
+            type: "string",
+            description: "ISO date-time: return only projects modified since this timestamp",
+          },
+        },
       },
       handler: async (params: unknown) => {
-        parseToolArgs(emptyToolArgs, params);
-        const response = await client.get<Project>("/v1/projects");
+        const args = parseToolArgs(listProjectsSchema, params);
+        const response = await client.get<Project>(
+          "/v1/projects",
+          args.modified_since !== undefined ? { modified_since: args.modified_since } : undefined,
+        );
         const items = extractItems<Project>(response);
         return {
           content: [

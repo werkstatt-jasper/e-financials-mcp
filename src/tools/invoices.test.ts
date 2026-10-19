@@ -47,6 +47,15 @@ describe("invoice tools", () => {
     expect(data.current_page).toBe(1);
   });
 
+  it("list_sales_invoices passes modified_since", async () => {
+    vi.mocked(client.get).mockResolvedValue({ ...invoicesFixture.sales_empty_response } as never);
+    await tools.list_sales_invoices.handler({ modified_since: "2026-10-01T00:00:00Z" });
+    expect(client.get).toHaveBeenCalledWith(
+      "/v1/sale_invoices",
+      expect.objectContaining({ modified_since: "2026-10-01T00:00:00Z" }),
+    );
+  });
+
   it("list_sales_invoices handles empty items", async () => {
     vi.mocked(client.get).mockResolvedValue({ ...invoicesFixture.sales_empty_response } as never);
     const result = await tools.list_sales_invoices.handler({});
@@ -740,11 +749,20 @@ describe("invoice tools", () => {
     expect(parseToolJson(result)).toEqual({ response_code: 0 });
   });
 
-  it("deliver_sales_invoice sends empty object when only id is provided", async () => {
+  it("deliver_sales_invoice always sends both required flags, defaulting to false", async () => {
     vi.mocked(client.patch).mockResolvedValue({ response_code: 0 } as never);
 
     await tools.deliver_sales_invoice.handler({ id: 10 });
-    expect(client.patch).toHaveBeenCalledWith("/v1/sale_invoices/10/deliver", {});
+    expect(client.patch).toHaveBeenCalledWith("/v1/sale_invoices/10/deliver", {
+      send_einvoice: false,
+      send_email: false,
+    });
+
+    await tools.deliver_sales_invoice.handler({ id: 11, send_einvoice: true });
+    expect(client.patch).toHaveBeenLastCalledWith("/v1/sale_invoices/11/deliver", {
+      send_einvoice: true,
+      send_email: false,
+    });
   });
 
   it("upload_purchase_invoice_file uses Content-Disposition over download.aspx", async () => {
