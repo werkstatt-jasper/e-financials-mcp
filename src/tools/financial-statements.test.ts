@@ -105,7 +105,7 @@ describe("financial statement tools", () => {
     expect(data.totals.difference).toBe(0);
     expect(data.totals.debit).toBe(data.totals.credit);
     expect(data.account_count).toBeGreaterThan(0);
-    expect(data.warnings[0]).toMatch(/Algbilansi/);
+    expect(data.warnings).toEqual([]);
     expect(data.period).toEqual({ from: "2025-06-01", to: "2025-06-30" });
     expect(client.get).toHaveBeenCalledWith(
       "/v1/journals",
@@ -286,5 +286,87 @@ describe("financial statement tools", () => {
         date_to: "2025-12-31",
       }),
     ).rejects.toThrow("network down");
+  });
+  describe("opening-balance journal (operation_type INITIAL)", () => {
+    // Shape per the RIK OpenAPI spec (22.06.2026): INITIAL postings are normalised
+    // to D/C with non-negative amounts, so they sum like any other journal.
+    const opening: Journal = {
+      id: 90,
+      effective_date: "2025-01-01",
+      registered: true,
+      is_deleted: false,
+      operation_type: "INITIAL",
+      postings: [
+        { accounts_id: 1000, type: "D", amount: 300, base_amount: 300 },
+        { accounts_id: 2000, type: "C", amount: 120, base_amount: 120 },
+        { accounts_id: 2500, type: "C", amount: 180, base_amount: 180 },
+      ],
+    };
+    const ledger = [opening, ...journals];
+
+    it("compute_balance_sheet counts opening balances exactly once and has no opening warning", async () => {
+      mockLedger(client, ledger);
+      const data = parseToolJson(
+        await tools.compute_balance_sheet.handler({ date_to: "2025-12-31" }),
+      ) as {
+        assets: { total: number };
+        liabilities: { total: number };
+        equity: { total: number };
+        check: { balanced: boolean };
+        warnings: string[];
+      };
+      // 300 opening + 100 sale - 40 expense + 50 capital
+      expect(data.assets.total).toBe(410);
+      expect(data.liabilities.total).toBe(120);
+      // 180 opening + 50 capital + 60 open P&L
+      expect(data.equity.total).toBe(290);
+      expect(data.check.balanced).toBe(true);
+      expect(data.warnings.some((w) => /opening|Algbilansi/i.test(w))).toBe(false);
+    });
+
+    it("compute_trial_balance includes the opening journal inside the window and stays balanced", async () => {
+      mockLedger(client, ledger);
+      const data = parseToolJson(
+        await tools.compute_trial_balance.handler({
+          date_from: "2025-01-01",
+          date_to: "2025-12-31",
+        }),
+      ) as {
+        accounts: Array<{ account_id: number; debit_total: number; balance: number }>;
+        totals: { debit: number; credit: number; difference: number };
+        warnings: string[];
+      };
+      expect(data.accounts.find((a) => a.account_id === 1000)).toMatchObject({
+        debit_total: 450,
+        balance: 410,
+      });
+      expect(data.totals.difference).toBe(0);
+      expect(data.warnings).toEqual([]);
+    });
+
+    it("compute_trial_balance leaves the opening journal out of a later window", async () => {
+      mockLedger(client, ledger);
+      const data = parseToolJson(
+        await tools.compute_trial_balance.handler({
+          date_from: "2025-06-01",
+          date_to: "2025-06-30",
+        }),
+      ) as { accounts: Array<{ account_id: number; debit_total: number }> };
+      expect(data.accounts.find((a) => a.account_id === 1000)?.debit_total).toBe(100);
+      expect(data.accounts.some((a) => a.account_id === 2000)).toBe(false);
+    });
+
+    it("compute_profit_and_loss is not changed by balance-sheet opening entries", async () => {
+      mockLedger(client, ledger);
+      const data = parseToolJson(
+        await tools.compute_profit_and_loss.handler({
+          date_from: "2025-01-01",
+          date_to: "2025-12-31",
+        }),
+      ) as { revenue: { total: number }; expenses: { total: number }; net_profit: number };
+      expect(data.revenue.total).toBe(100);
+      expect(data.expenses.total).toBe(40);
+      expect(data.net_profit).toBe(60);
+    });
   });
 });
