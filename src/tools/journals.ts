@@ -1,7 +1,12 @@
 import { z } from "zod";
 import type { EFinancialsClient } from "../client.js";
 import { resolveFileInput } from "../resolve-file-input.js";
-import type { ApiFile, Journal, Posting } from "../types/journal.js";
+import {
+  type ApiFile,
+  JOURNAL_OPERATION_TYPES,
+  type Journal,
+  type Posting,
+} from "../types/journal.js";
 import {
   creditDebitEnum,
   optionalNumber,
@@ -18,7 +23,7 @@ const postingLineSchemaProps = {
   journals_id: {
     type: "number" as const,
     description:
-      "Journal entry ID for this line. When creating a new journal, use 0 or omit (the server links lines after create).",
+      "Ignored: read-only in the RIK API since 08.05.2026 and never sent. Accepted so existing callers keep working.",
   },
   accounts_id: {
     type: "number" as const,
@@ -86,7 +91,7 @@ const journalBodySchemaProps = {
   postings: {
     type: "array" as const,
     description:
-      "Journal lines (debits/credits). OpenAPI requires journals_id on each line; use 0 for new entries.",
+      "Journal lines (debits/credits). Each line needs accounts_id and amount; journals_id is read-only and is not sent.",
     items: {
       type: "object" as const,
       properties: postingLineSchemaProps,
@@ -133,6 +138,7 @@ const listJournalsSchema = z.object({
     .transform((v) => v ?? undefined),
   start_date: optionalYmd,
   end_date: optionalYmd,
+  operation_type: z.enum(JOURNAL_OPERATION_TYPES).optional(),
 });
 
 const journalsIdSchema = z.object({ journals_id: positiveInt });
@@ -171,10 +177,8 @@ function normalizePostingsForApi(postings: unknown): Posting[] {
     return [];
   }
   return postings.map((row) => {
-    const line = { ...(row as Record<string, unknown>) };
-    if (line.journals_id === undefined) {
-      line.journals_id = 0;
-    }
+    // journals_id is read-only (spec 08.05.2026); the API links lines itself.
+    const { journals_id: _readOnly, ...line } = row as Record<string, unknown>;
     return line as unknown as Posting;
   });
 }
@@ -183,7 +187,7 @@ export function createJournalTools(client: EFinancialsClient) {
   return {
     list_journals: {
       description:
-        "List journal entries with optional pagination and filters (modified_since, effective date range). Amendments (parent_id / amendment_number, UI 'Parandus') are additive correcting entries, not replacements — count the original and each amendment.",
+        "List journal entries with optional pagination and filters (modified_since, effective date range, operation_type). Includes the opening-balance entry (operation_type INITIAL); pass operation_type to list one kind only. Amendments (parent_id / amendment_number, UI 'Parandus') are additive correcting entries, not replacements — count the original and each amendment.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -203,6 +207,12 @@ export function createJournalTools(client: EFinancialsClient) {
             type: "string",
             description: "Effective date on this date or before (YYYY-MM-DD)",
           },
+          operation_type: {
+            type: "string",
+            enum: [...JOURNAL_OPERATION_TYPES],
+            description:
+              "Return only entries of this kind, e.g. INITIAL (opening balance), ENTRY (manual entry), SALE_INVOICE, PURCHASE_INVOICE, TRANSACTION",
+          },
         },
       },
       handler: async (params: unknown) => {
@@ -212,6 +222,7 @@ export function createJournalTools(client: EFinancialsClient) {
           modified_since: args.modified_since,
           start_date: args.start_date,
           end_date: args.end_date,
+          operation_type: args.operation_type,
         });
         return {
           content: [
@@ -260,7 +271,7 @@ export function createJournalTools(client: EFinancialsClient) {
 
     create_journal: {
       description:
-        "Create a journal entry (POST). Body follows OpenAPI Journals: effective_date and balanced postings (debit/credit) are required. Each posting line should include accounts_id and amount; use journals_id 0 on lines for new entries.",
+        "Create a journal entry (POST). Body follows OpenAPI Journals: effective_date and balanced postings (debit/credit) are required. Each posting line should include accounts_id, type (D or C) and amount. Posting journals_id is read-only and is not sent.",
       inputSchema: {
         type: "object" as const,
         properties: journalBodySchemaProps,
@@ -286,7 +297,7 @@ export function createJournalTools(client: EFinancialsClient) {
 
     update_journal: {
       description:
-        "PATCH an existing journal entry. Only send fields to change. Read-only: id, parent_id, number, amendment_number, registered, operations_id, operation_type, base_document_files_id, is_xls_imported, posting ids, posting base_amount.",
+        "PATCH an existing journal entry. Only send fields to change. Read-only: id, parent_id, number, amendment_number, registered, operations_id, operation_type, base_document_files_id, is_xls_imported, register_date, is_deleted, posting ids, posting journals_id, posting base_amount. A registered journal only accepts title and document_number; to change postings (also on the opening-balance INITIAL entry) call invalidate_journal, then update_journal, then register_journal.",
       inputSchema: {
         type: "object" as const,
         properties: {

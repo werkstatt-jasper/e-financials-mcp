@@ -45,6 +45,27 @@ describe("journal tools", () => {
     expect(data.total_pages).toBe(2);
   });
 
+  it("list_journals passes the operation_type filter", async () => {
+    vi.mocked(client.get).mockResolvedValue({ items: [] } as never);
+    await tools.list_journals.handler({ operation_type: "INITIAL", start_date: "2025-01-01" });
+    expect(client.get).toHaveBeenCalledWith(
+      "/v1/journals",
+      expect.objectContaining({ operation_type: "INITIAL", start_date: "2025-01-01" }),
+    );
+  });
+
+  it("list_journals rejects an operation_type outside the spec enum", async () => {
+    await expect(tools.list_journals.handler({ operation_type: "OPENING" })).rejects.toThrow();
+    expect(client.get).not.toHaveBeenCalled();
+  });
+
+  it("list_journals advertises the 21 spec operation types", () => {
+    const prop = tools.list_journals.inputSchema.properties.operation_type;
+    expect(prop.enum).toHaveLength(21);
+    expect(prop.enum).toContain("INITIAL");
+    expect(prop.enum).toContain("YEAR_CLOSING");
+  });
+
   it("list_journals defaults pagination when API omits fields", async () => {
     vi.mocked(client.get).mockResolvedValue({ items: [] } as never);
     const result = await tools.list_journals.handler({});
@@ -84,7 +105,7 @@ describe("journal tools", () => {
     expect(parseToolJson(result)).toEqual(journalsFixture.single);
   });
 
-  it("create_journal posts body with journals_id 0 on postings when omitted", async () => {
+  it("create_journal posts postings without journals_id", async () => {
     vi.mocked(client.post).mockResolvedValue({ ...journalsFixture.api_ok } as never);
     await tools.create_journal.handler({
       effective_date: "2025-01-15",
@@ -98,13 +119,13 @@ describe("journal tools", () => {
       effective_date: "2025-01-15",
       title: "Opening",
       postings: [
-        { accounts_id: 100, amount: 50, type: "D", journals_id: 0 },
-        { accounts_id: 200, amount: 50, type: "C", journals_id: 0 },
+        { accounts_id: 100, amount: 50, type: "D" },
+        { accounts_id: 200, amount: 50, type: "C" },
       ],
     });
   });
 
-  it("create_journal preserves explicit journals_id on postings", async () => {
+  it("create_journal accepts but does not send a read-only journals_id on postings", async () => {
     vi.mocked(client.post).mockResolvedValue({ ...journalsFixture.api_ok } as never);
     await tools.create_journal.handler({
       effective_date: "2025-01-15",
@@ -112,7 +133,7 @@ describe("journal tools", () => {
     });
     expect(client.post).toHaveBeenCalledWith("/v1/journals", {
       effective_date: "2025-01-15",
-      postings: [{ journals_id: 99, accounts_id: 1, amount: 10, type: "D" }],
+      postings: [{ accounts_id: 1, amount: 10, type: "D" }],
     });
   });
 
@@ -128,7 +149,7 @@ describe("journal tools", () => {
     });
   });
 
-  it("create_journal keeps journals_id null on a posting line when provided", async () => {
+  it("create_journal drops a null journals_id on a posting line", async () => {
     vi.mocked(client.post).mockResolvedValue({ ...journalsFixture.api_ok } as never);
     await tools.create_journal.handler({
       effective_date: "2025-01-15",
@@ -145,7 +166,6 @@ describe("journal tools", () => {
       effective_date: "2025-01-15",
       postings: [
         {
-          journals_id: null,
           accounts_id: 1,
           amount: 10,
           type: "D",
@@ -163,7 +183,7 @@ describe("journal tools", () => {
     });
     expect(client.patch).toHaveBeenCalledWith("/v1/journals/739", {
       title: "Renamed",
-      postings: [{ accounts_id: 1, amount: 5, type: "D", journals_id: 0 }],
+      postings: [{ accounts_id: 1, amount: 5, type: "D" }],
     });
   });
 
