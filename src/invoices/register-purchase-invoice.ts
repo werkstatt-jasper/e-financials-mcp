@@ -3,6 +3,7 @@ import { roundMoney } from "../money.js";
 import type { PurchaseInvoice } from "../types/invoice.js";
 import { buildPurchaseInvoiceTotalsPatch } from "./purchase-invoice-patch.js";
 import { isCompanyVatRegistered } from "./purchase-vat-defaults.js";
+import { withRegisterConflictHint } from "./register-conflict.js";
 
 export interface RegisterPurchaseInvoiceInput {
   id: number;
@@ -66,7 +67,9 @@ export async function registerPurchaseInvoiceWithRepair(
     hasInvoiceGross &&
     (hasInvoiceVat || !isVatRegistered)
   ) {
-    const response = await client.patch(`/v1/purchase_invoices/${input.id}/register`);
+    const response = await withRegisterConflictHint("purchase", input.id, () =>
+      client.patch(`/v1/purchase_invoices/${input.id}/register`),
+    );
     return { id: input.id, repaired: false, response };
   }
 
@@ -102,6 +105,8 @@ export async function registerPurchaseInvoiceWithRepair(
     }
   }
 
-  const response = await client.patch(`/v1/purchase_invoices/${input.id}/register`);
+  const response = await withRegisterConflictHint("purchase", input.id, () =>
+    client.patch(`/v1/purchase_invoices/${input.id}/register`),
+  );
   return { id: input.id, repaired, response };
 }

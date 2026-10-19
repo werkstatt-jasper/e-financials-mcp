@@ -3,6 +3,7 @@ import type { EFinancialsClient } from "../client.js";
 import { assertCashAccountsDimensionWritable } from "../invoices/cash-accounts-dimension.js";
 import { createPurchaseInvoiceWithRepair } from "../invoices/create-purchase-invoice.js";
 import { mergePurchaseInvoiceItems } from "../invoices/merge-purchase-invoice-items.js";
+import { withRegisterConflictHint } from "../invoices/register-conflict.js";
 import { registerPurchaseInvoiceWithRepair } from "../invoices/register-purchase-invoice.js";
 import {
   extractSeriesList,
@@ -1036,7 +1037,9 @@ export function createInvoiceTools(client: EFinancialsClient) {
       },
       handler: async (params: unknown) => {
         const args = parseToolArgs(invoiceIdSchema, params);
-        const response = await client.patch(`/v1/sale_invoices/${args.id}/register`);
+        const response = await withRegisterConflictHint("sale", args.id, () =>
+          client.patch(`/v1/sale_invoices/${args.id}/register`),
+        );
         return {
           content: [
             {
