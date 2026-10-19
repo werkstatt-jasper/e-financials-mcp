@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createHttpJsonApiError } from "../api-error.js";
 import type { EFinancialsClient } from "../client.js";
 import { createMockClient } from "../tools/test-helpers.js";
 import { registerPurchaseInvoiceWithRepair } from "./register-purchase-invoice.js";
@@ -34,6 +35,26 @@ describe("registerPurchaseInvoiceWithRepair", () => {
       items: [{ total_net_price: 100, vat_amount: 24 }],
     });
     expect(client.patch).toHaveBeenCalledWith("/v1/purchase_invoices/42/register");
+  });
+
+  it("adds the register hint to a 409 and keeps all messages", async () => {
+    vi.mocked(client.patch).mockImplementation(async (path: string) => {
+      if (path.endsWith("/register")) {
+        throw createHttpJsonApiError({
+          method: "PATCH",
+          url: `https://rmp-api.rik.ee${path}`,
+          httpStatus: 409,
+          errorData: { code: 409, messages: ["Generic.", "Row 2: classifier not allowed"] },
+        });
+      }
+      return {} as never;
+    });
+    await expect(registerPurchaseInvoiceWithRepair(client, { id: 42 })).rejects.toThrow(
+      /Generic\.; Row 2: classifier not allowed[\s\S]*update_purchase_invoice/,
+    );
+    await expect(
+      registerPurchaseInvoiceWithRepair(client, { id: 42, preserve_existing_totals: true }),
+    ).rejects.toThrow(/Purchase invoice 42 was not registered/);
   });
 
   it("skips repair when totals already match", async () => {

@@ -66,6 +66,21 @@ export function isRetryableFetchFailure(error: unknown): boolean {
 }
 
 /**
+ * RIK `ApiResponse.messages`: every string, in order, joined with "; ".
+ * The first message is often generic and the following ones name the failed checks.
+ */
+export function joinApiMessages(messages: unknown): string | undefined {
+  if (!Array.isArray(messages)) {
+    return undefined;
+  }
+  const texts = messages
+    .filter((m): m is string => typeof m === "string")
+    .map((m) => m.trim())
+    .filter((m) => m !== "");
+  return texts.length > 0 ? texts.join("; ") : undefined;
+}
+
+/**
  * Build error for non-2xx response with a JSON body (RIK or generic).
  */
 export function createHttpJsonApiError(params: {
@@ -80,6 +95,7 @@ export function createHttpJsonApiError(params: {
     (typeof errorData.message === "string" ? errorData.message : undefined) ||
     (typeof errorData.error === "string" ? errorData.error : undefined) ||
     (Array.isArray(errorData.errors) ? errorData.errors.join(", ") : undefined) ||
+    joinApiMessages(errorData.messages) ||
     JSON.stringify(errorData);
   const rawCode = errorData.response_code ?? errorData.code ?? httpStatus;
   const message = `API Error ${rawCode}: ${errorMessage} ${clientFacingRequestLabel(method, url)}`;
