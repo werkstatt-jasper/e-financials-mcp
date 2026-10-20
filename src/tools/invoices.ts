@@ -52,6 +52,10 @@ const listSalesInvoicesSchema = z.object({
   clients_id: optionalPositiveInt,
   start_date: optionalYmd,
   end_date: optionalYmd,
+  modified_since: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? undefined),
   page: optionalPage,
 });
 
@@ -277,6 +281,10 @@ export function createInvoiceTools(client: EFinancialsClient) {
             type: "string",
             description: "Filter invoices up to this date (YYYY-MM-DD)",
           },
+          modified_since: {
+            type: "string",
+            description: "ISO date-time: return only invoices modified since this timestamp",
+          },
           page: {
             type: "number",
             description: "Page number for pagination (default: 1)",
@@ -291,6 +299,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
           clients_id: args.clients_id,
           start_date: args.start_date,
           end_date: args.end_date,
+          modified_since: args.modified_since,
           page: args.page,
         });
         return {
@@ -1265,7 +1274,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
 
     deliver_sales_invoice: {
       description:
-        "Send a sales invoice to the customer (PATCH .../deliver): e-invoice and/or email with optional subject and body.",
+        "Send a sales invoice to the customer (PATCH .../deliver): e-invoice and/or email with optional subject and body. The API requires both send_einvoice and send_email; an omitted flag is sent as false, so set at least one to true.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -1275,11 +1284,11 @@ export function createInvoiceTools(client: EFinancialsClient) {
           },
           send_einvoice: {
             type: "boolean",
-            description: "Send machine-readable e-invoice to the customer",
+            description: "Send machine-readable e-invoice to the customer (default false)",
           },
           send_email: {
             type: "boolean",
-            description: "Send invoice by email (PDF)",
+            description: "Send invoice by email (PDF) (default false)",
           },
           email_addresses: {
             type: "string",
@@ -1299,9 +1308,11 @@ export function createInvoiceTools(client: EFinancialsClient) {
       handler: async (params: unknown) => {
         const parsed = parseToolArgs(deliverSalesInvoiceSchema, params);
         const { id, ...rest } = parsed;
-        const body: Record<string, unknown> = {};
-        if (rest.send_einvoice !== undefined) body.send_einvoice = rest.send_einvoice;
-        if (rest.send_email !== undefined) body.send_email = rest.send_email;
+        // Both flags are required by SaleInvoicesDeliveryRequest (spec 08.05.2026).
+        const body: Record<string, unknown> = {
+          send_einvoice: rest.send_einvoice ?? false,
+          send_email: rest.send_email ?? false,
+        };
         if (rest.email_addresses !== undefined) body.email_addresses = rest.email_addresses;
         if (rest.email_subject !== undefined) body.email_subject = rest.email_subject;
         if (rest.email_body !== undefined) body.email_body = rest.email_body;
