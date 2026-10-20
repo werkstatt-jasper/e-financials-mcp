@@ -37,7 +37,8 @@
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "docs:readme": "npm run build && node -e \"import('./dist/readme-tools.js').then((m) => console.log(m.writeReadmeToolTable('README.md') ? 'README tool table updated' : 'README tool table already up to date'))\""
   },
   "license": "MIT",
   "repository": {
