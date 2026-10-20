@@ -4,7 +4,6 @@ import {
   type AccountBalance,
   computeAllBalances,
   EMPTY_LEDGER_WARNING,
-  OPENING_BALANCE_API_WARNING,
   sumCategory,
   UNKNOWN_ACCOUNT_BALANCE_WARNING,
 } from "../financial-statements/balances.js";
@@ -49,7 +48,7 @@ async function loadAccounts(client: EFinancialsClient): Promise<Account[]> {
 }
 
 function statementWarnings(balances: AccountBalance[]): string[] {
-  const warnings = [OPENING_BALANCE_API_WARNING];
+  const warnings: string[] = [];
   if (balances.some((b) => b.unknown_account === true)) {
     warnings.push(UNKNOWN_ACCOUNT_BALANCE_WARNING);
   }
@@ -66,7 +65,7 @@ export function createFinancialStatementTools(client: EFinancialsClient) {
   return {
     compute_trial_balance: {
       description:
-        "Compute a trial balance (käibeandmik) from registered journal postings. Optional date_from/date_to filter on journal effective_date. Amounts use EUR base_amount when present. Refuses incomplete loads when the journal list exceeds the page cap — narrow dates. Opening-balance UI entries may be missing from the API. Journal amendments (parent_id / amendment_number, UI 'Parandus') are additive corrections; both the original and each amendment are counted.",
+        "Compute a trial balance (käibeandmik) from registered journal postings. Optional date_from/date_to filter on journal effective_date. Amounts use EUR base_amount when present. Refuses incomplete loads when the journal list exceeds the page cap — narrow dates. Opening-balance entries (operation_type INITIAL, UI: Algbilansi kanded) are journals like any other and are already included; do not add opening balances from the UI on top. Journal amendments (parent_id / amendment_number, UI 'Parandus') are additive corrections; both the original and each amendment are counted.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -109,7 +108,7 @@ export function createFinancialStatementTools(client: EFinancialsClient) {
             return jsonResult({
               error: err.code,
               message: err.message,
-              warnings: [OPENING_BALANCE_API_WARNING],
+              warnings: [],
             });
           }
           throw err;
@@ -119,7 +118,7 @@ export function createFinancialStatementTools(client: EFinancialsClient) {
 
     compute_balance_sheet: {
       description:
-        "Compute a balance sheet (bilanss) as of date_to from registered journal postings (cumulative). Groups Varad / Kohustused / Omakapital; folds open P&L (Tulud−Kulud) into equity for the A=L+E check. EUR base amounts. May fail if the unfiltered journal list is too large — pass date_to and prefer period tools for large books. Journal amendments (parent_id / amendment_number, UI 'Parandus') are additive corrections; both the original and each amendment are counted.",
+        "Compute a balance sheet (bilanss) as of date_to from registered journal postings (cumulative, including the opening-balance journal; do not add opening balances from the UI on top). Groups Varad / Kohustused / Omakapital; folds open P&L (Tulud−Kulud) into equity for the A=L+E check. EUR base amounts. May fail if the unfiltered journal list is too large — pass date_to and prefer period tools for large books. Journal amendments (parent_id / amendment_number, UI 'Parandus') are additive corrections; both the original and each amendment are counted.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -176,7 +175,7 @@ export function createFinancialStatementTools(client: EFinancialsClient) {
             return jsonResult({
               error: err.code,
               message: err.message,
-              warnings: [OPENING_BALANCE_API_WARNING],
+              warnings: [],
             });
           }
           throw err;
@@ -186,7 +185,7 @@ export function createFinancialStatementTools(client: EFinancialsClient) {
 
     compute_profit_and_loss: {
       description:
-        "Compute a profit and loss statement (kasumiaruanne) for a required date_from/date_to window from registered journal postings. Tulud (revenue) and Kulud (expenses); net_profit = revenue − expenses. EUR base amounts. Journal amendments (parent_id / amendment_number, UI 'Parandus') are additive corrections; both the original and each amendment are counted.",
+        "Compute a profit and loss statement (kasumiaruanne) for a required date_from/date_to window from registered journal postings. Tulud (revenue) and Kulud (expenses); net_profit = revenue − expenses. EUR base amounts. Only revenue and expense accounts are summed, so opening balances of balance-sheet accounts never enter the result. Journal amendments (parent_id / amendment_number, UI 'Parandus') are additive corrections; both the original and each amendment are counted.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -237,7 +236,7 @@ export function createFinancialStatementTools(client: EFinancialsClient) {
             return jsonResult({
               error: err.code,
               message: err.message,
-              warnings: [OPENING_BALANCE_API_WARNING],
+              warnings: [],
             });
           }
           throw err;

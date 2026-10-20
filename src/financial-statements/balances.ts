@@ -20,9 +20,6 @@ export interface ComputeAllBalancesOptions {
   dateTo?: string;
 }
 
-export const OPENING_BALANCE_API_WARNING =
-  "Opening-balance entries (e-Financials UI: Algbilansi kanded) may not appear in /v1/journals. Trial balance, balance sheet, and P&L can miss opening amounts — verify opening balances in the UI.";
-
 export const UNKNOWN_ACCOUNT_BALANCE_WARNING =
   "Some postings reference account ids that are missing from the loaded chart of accounts. They are included as 'Unknown' rows so the report is not silently zeroed.";
 
