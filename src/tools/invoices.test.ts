@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import invoicesFixture from "../__fixtures__/invoices.json" with { type: "json" };
+import { createHttpJsonApiError } from "../api-error.js";
 import type { EFinancialsClient } from "../client.js";
 import { createInvoiceTools, mergePurchaseInvoiceItems } from "./invoices.js";
 import { createMockClient, parseToolJson } from "./test-helpers.js";
@@ -641,6 +642,20 @@ describe("invoice tools", () => {
     const result = await tools.register_sales_invoice.handler({ id: 42 });
     expect(client.patch).toHaveBeenCalledWith("/v1/sale_invoices/42/register");
     expect(parseToolJson(result)).toEqual({ response_code: 0 });
+  });
+
+  it("register_sales_invoice surfaces every 409 message with a hint", async () => {
+    vi.mocked(client.patch).mockRejectedValue(
+      createHttpJsonApiError({
+        method: "PATCH",
+        url: "https://rmp-api.rik.ee/v1/sale_invoices/42/register",
+        httpStatus: 409,
+        errorData: { code: 409, messages: ["Classifiers come from settings.", "Row 1: missing"] },
+      }),
+    );
+    await expect(tools.register_sales_invoice.handler({ id: 42 })).rejects.toThrow(
+      /Classifiers come from settings\.; Row 1: missing[\s\S]*Sales invoice 42 was not registered/,
+    );
   });
 
   it("invalidate_sales_invoice patches invalidate without body", async () => {
