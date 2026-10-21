@@ -67,8 +67,16 @@ describe("account tools", () => {
   it("list_projects extracts items", async () => {
     vi.mocked(client.get).mockResolvedValue({ ...accountsFixture.projects_list } as never);
     const result = await tools.list_projects.handler({});
-    expect(client.get).toHaveBeenCalledWith("/v1/projects");
+    expect(client.get).toHaveBeenCalledWith("/v1/projects", undefined);
     expect(parseToolJson(result)).toEqual(accountsFixture.projects_list.items);
+  });
+
+  it("list_projects passes modified_since", async () => {
+    vi.mocked(client.get).mockResolvedValue({ ...accountsFixture.projects_list } as never);
+    await tools.list_projects.handler({ modified_since: "2026-10-01T00:00:00Z" });
+    expect(client.get).toHaveBeenCalledWith("/v1/projects", {
+      modified_since: "2026-10-01T00:00:00Z",
+    });
   });
 
   it("list_purchase_articles extracts items", async () => {
