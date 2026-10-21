@@ -143,11 +143,13 @@ export function computeAccountBalance(
       if (t !== "D" && t !== "C") {
         continue;
       }
+      // Narrowed by the guard above; the type keeps `string` for backward compatibility.
+      const side = t as "D" | "C";
       const amt = postingAmount(posting);
       if (amt === 0) {
         continue;
       }
-      if (t === "D") {
+      if (side === "D") {
         debitTotal += amt;
       } else {
         creditTotal += amt;
@@ -157,7 +159,7 @@ export function computeAccountBalance(
           journal_id: journal.id ?? null,
           date: journal.effective_date,
           title: journal.title ?? null,
-          type: t,
+          type: side,
           amount: roundMoney(amt),
           clients_id: journal.clients_id ?? null,
         });
