@@ -117,6 +117,28 @@ describe("createHttpJsonApiError", () => {
     expect(e.message).toContain("a, b");
   });
 
+  it("joins every ApiResponse message in order", () => {
+    const e = createHttpJsonApiError({
+      method: "PATCH",
+      url: "https://x/v1/purchase_invoices/1/register",
+      httpStatus: 409,
+      errorData: { code: 409, messages: ["General", " ", 7, "Check A failed", "Check B failed "] },
+    });
+    expect(e.message).toBe(
+      "API Error 409: General; Check A failed; Check B failed [PATCH /v1/purchase_invoices/1/register]",
+    );
+  });
+
+  it("falls back to JSON when messages has no strings", () => {
+    const e = createHttpJsonApiError({
+      method: "GET",
+      url: "https://x",
+      httpStatus: 409,
+      errorData: { code: 409, messages: [] },
+    });
+    expect(e.message).toContain('{"code":409,"messages":[]}');
+  });
+
   it("falls back to JSON.stringify when no known message fields", () => {
     const e = createHttpJsonApiError({
       method: "GET",
