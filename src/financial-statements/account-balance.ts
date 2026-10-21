@@ -1,7 +1,6 @@
 import { roundMoney } from "../money.js";
 import type { Account } from "../types/accounts.js";
 import type { Journal, Posting } from "../types/journal.js";
-import { OPENING_BALANCE_API_WARNING } from "./balances.js";
 
 export interface BalanceEntry {
   journal_id: number | null;
@@ -109,7 +108,7 @@ export function computeAccountBalance(
   options: ComputeAccountBalanceOptions,
 ): AccountBalanceDetail {
   const account = accounts.find((a) => a.id === options.accountId);
-  const warnings: string[] = [OPENING_BALANCE_API_WARNING];
+  const warnings: string[] = [];
   if (account == null) {
     warnings.push(
       `Account id ${options.accountId} was not found in the chart of accounts; balance_type defaults to D.`,
@@ -274,7 +273,7 @@ export function computeClientDebt(
   const accountRows: ClientDebtAccountRow[] = [];
   let totalDebt = 0;
   let totalReceivable = 0;
-  const warnings: string[] = [OPENING_BALANCE_API_WARNING];
+  const warnings: string[] = [];
 
   for (const accountId of accountIds) {
     const detail = computeAccountBalance(accounts, journals, {
@@ -282,7 +281,7 @@ export function computeClientDebt(
       clientsId: options.clientsId,
     });
     for (const w of detail.warnings) {
-      if (w !== OPENING_BALANCE_API_WARNING && !warnings.includes(w)) {
+      if (!warnings.includes(w)) {
         warnings.push(w);
       }
     }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Account } from "../types/accounts.js";
 import type { Journal } from "../types/journal.js";
-import { computeAllBalances, OPENING_BALANCE_API_WARNING, sumCategory } from "./balances.js";
+import { computeAllBalances, sumCategory } from "./balances.js";
 
 function account(
   overrides: Partial<Account> & Pick<Account, "id" | "balance_type" | "account_type_est">,
@@ -287,9 +287,5 @@ describe("sumCategory", () => {
       },
     ];
     expect(sumCategory(items, "Kohustused", "C").total).toBe(85);
-  });
-
-  it("exports opening-balance warning constant", () => {
-    expect(OPENING_BALANCE_API_WARNING).toMatch(/Algbilansi/);
   });
 });

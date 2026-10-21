@@ -4,7 +4,6 @@ import {
   computeAccountBalance,
   computeClientDebt,
 } from "../financial-statements/account-balance.js";
-import { OPENING_BALANCE_API_WARNING } from "../financial-statements/balances.js";
 import {
   JournalListTruncatedError,
   loadJournalsWithPostings,
@@ -51,7 +50,7 @@ export function createAccountBalanceTools(client: EFinancialsClient) {
   return {
     compute_account_balance: {
       description:
-        "Compute the balance of one chart account from registered journal postings (EUR base_amount when present). Requires account_id (DB id). Optional clients_id filters journals tagged with that client; optional date_from/date_to filter on journal effective_date (inclusive). Set include_entries=true for posting detail. Opening-balance UI entries may be missing from the API. Refuses incomplete loads when the journal list exceeds the page cap — narrow dates. Journal amendments (parent_id / amendment_number, UI 'Parandus') are additive corrections; both the original and each amendment are counted.",
+        "Compute the balance of one chart account from registered journal postings (EUR base_amount when present). Requires account_id (DB id). Optional clients_id filters journals tagged with that client; optional date_from/date_to filter on journal effective_date (inclusive). Set include_entries=true for posting detail. Opening-balance entries (operation_type INITIAL, UI: Algbilansi kanded) are journals like any other and are already included; do not add opening balances from the UI on top. Refuses incomplete loads when the journal list exceeds the page cap — narrow dates. Journal amendments (parent_id / amendment_number, UI 'Parandus') are additive corrections; both the original and each amendment are counted.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -95,7 +94,7 @@ export function createAccountBalanceTools(client: EFinancialsClient) {
             return jsonResult({
               error: err.code,
               message: err.message,
-              warnings: [OPENING_BALANCE_API_WARNING],
+              warnings: [],
             });
           }
           throw err;
@@ -105,7 +104,7 @@ export function createAccountBalanceTools(client: EFinancialsClient) {
 
     compute_client_debt: {
       description:
-        "Compute a client's net position from registered journal postings tagged with clients_id. Optional account_ids (DB ids) limits which accounts are summarized; when omitted, every account with postings for that client is included. Summary: total_debt_to_client (C-type balances), total_receivable_from_client (D-type), net_position = receivable − debt. Opening-balance UI entries may be missing from the API.",
+        "Compute a client's net position from registered journal postings tagged with clients_id. Optional account_ids (DB ids) limits which accounts are summarized; when omitted, every account with postings for that client is included. Summary: total_debt_to_client (C-type balances), total_receivable_from_client (D-type), net_position = receivable − debt. Opening-balance entries (operation_type INITIAL) count only when that journal is tagged with this client.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -136,7 +135,7 @@ export function createAccountBalanceTools(client: EFinancialsClient) {
             return jsonResult({
               error: err.code,
               message: err.message,
-              warnings: [OPENING_BALANCE_API_WARNING],
+              warnings: [],
             });
           }
           throw err;

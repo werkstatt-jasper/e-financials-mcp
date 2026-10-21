@@ -6,7 +6,6 @@ import {
   computeAccountBalance,
   computeClientDebt,
 } from "./account-balance.js";
-import { OPENING_BALANCE_API_WARNING } from "./balances.js";
 
 function account(
   overrides: Partial<Account> & Pick<Account, "id" | "balance_type" | "account_type_est">,
@@ -135,7 +134,7 @@ describe("computeAccountBalance", () => {
     expect(result.debit_total).toBe(600);
     expect(result.credit_total).toBe(40);
     expect(result.balance).toBe(560);
-    expect(result.warnings).toContain(OPENING_BALANCE_API_WARNING);
+    expect(result.warnings).toEqual([]);
   });
 
   it("signs C-type accounts as credit - debit", () => {
@@ -330,6 +329,38 @@ describe("computeAccountBalance", () => {
     );
     expect(result.balance).toBe(0);
     expect(result.entry_count).toBe(0);
+  });
+});
+
+describe("computeAccountBalance with an opening-balance journal", () => {
+  const opening: Journal = {
+    id: 91,
+    effective_date: "2024-12-31",
+    registered: true,
+    is_deleted: false,
+    operation_type: "INITIAL",
+    postings: [
+      { accounts_id: 1210, type: "D", amount: 1000, base_amount: 1000 },
+      { accounts_id: 2310, type: "C", amount: 1000, base_amount: 1000 },
+    ],
+  };
+
+  it("adds the opening amount once, with no warning to add it again", () => {
+    const without = computeAccountBalance(chart, journals, { accountId: 1210 });
+    const withOpening = computeAccountBalance(chart, [opening, ...journals], { accountId: 1210 });
+    expect(withOpening.balance).toBe(without.balance + 1000);
+    expect(withOpening.warnings).toEqual([]);
+  });
+
+  it("lists a repeated warning once when account_ids repeats an unknown account", () => {
+    const result = computeClientDebt(chart, journals, { clientsId: 42, accountIds: [9999, 9999] });
+    expect(result.warnings.filter((w) => w.includes("9999"))).toHaveLength(1);
+  });
+
+  it("leaves an untagged opening journal out of a client's debt", () => {
+    const result = computeClientDebt(chart, [opening, ...journals], { clientsId: 42 });
+    const base = computeClientDebt(chart, journals, { clientsId: 42 });
+    expect(result).toEqual(base);
   });
 });
 
