@@ -99,7 +99,7 @@ Prefer to run it yourself over **stdio**? See [Quick start](#quick-start) below.
 
 | Tool | Description |
 |------|-------------|
-| `list_journals` | List journal entries with optional pagination and filters (modified_since, effective date range). |
+| `list_journals` | List journal entries with optional pagination and filters (modified_since, effective date range, operation_type). |
 | `get_journal` | Get one journal entry by ID (includes postings). |
 | `create_journal` | Create a journal entry (POST). |
 | `update_journal` | PATCH an existing journal entry. |
@@ -169,7 +169,7 @@ Prefer to run it yourself over **stdio**? See [Quick start](#quick-start) below.
 | Tool | Description |
 |------|-------------|
 | `compute_trial_balance` | Compute a trial balance (käibeandmik) from registered journal postings. |
-| `compute_balance_sheet` | Compute a balance sheet (bilanss) as of date_to from registered journal postings (cumulative). |
+| `compute_balance_sheet` | Compute a balance sheet (bilanss) as of date_to from registered journal postings (cumulative, including the opening-balance journal; do not add opening… |
 | `compute_profit_and_loss` | Compute a profit and loss statement (kasumiaruanne) for a required date_from/date_to window from registered journal postings. |
 | `compute_receivables_aging` | Compute receivables aging from unpaid confirmed sale invoices. |
 | `compute_payables_aging` | Compute payables aging from unpaid confirmed purchase invoices. |
