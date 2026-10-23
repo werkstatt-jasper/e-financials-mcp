@@ -18,7 +18,37 @@ export interface AccountBalance {
 export interface ComputeAllBalancesOptions {
   dateFrom?: string;
   dateTo?: string;
+  /** Skip whole journals whose `operation_type` is in this list (null/missing types are kept). */
+  excludeOperationTypes?: readonly string[];
+  /** Skip individual postings on these account ids. */
+  excludeAccountIds?: readonly number[];
+  /** When set, receives the journals/postings skipped by the two options above. */
+  exclusionReport?: BalanceExclusionReport;
 }
+
+export interface ExcludedJournalRef {
+  id?: number;
+  number?: number;
+  effective_date: string;
+  title?: string;
+  operation_type?: string;
+  /** "operation_type" when the whole journal was skipped; "account" when only some postings were. */
+  reason: "operation_type" | "account";
+}
+
+export interface BalanceExclusionReport {
+  journals: ExcludedJournalRef[];
+  posting_count: number;
+}
+
+/** Journal operation types that close a financial year (RIK `Journals.operation_type`). */
+export const CLOSING_OPERATION_TYPES = ["YEAR_CLOSING", "CLOSING"] as const;
+
+/**
+ * Account 9000 "Arvestuslik koondtulemus": the period-result transfer account, not operating revenue.
+ * On the standard chart it is category Tulud with balance_type D, so a debit reduces profit.
+ */
+export const RESULT_TRANSFER_ACCOUNT_IDS = [9000] as const;
 
 export const UNKNOWN_ACCOUNT_BALANCE_WARNING =
   "Some postings reference account ids that are missing from the loaded chart of accounts. They are included as 'Unknown' rows so the report is not silently zeroed.";
@@ -58,6 +88,9 @@ export function computeAllBalances(
   const accountById = new Map(accounts.map((a) => [a.id, a]));
   const debit = new Map<number, number>();
   const credit = new Map<number, number>();
+  const excludedTypes = new Set(options.excludeOperationTypes ?? []);
+  const excludedAccounts = new Set(options.excludeAccountIds ?? []);
+  const report = options.exclusionReport;
 
   for (const journal of journals) {
     if (journal.is_deleted === true || journal.registered !== true) {
@@ -67,8 +100,34 @@ export function computeAllBalances(
       continue;
     }
     const postings = Array.isArray(journal.postings) ? journal.postings : [];
+    const ref = (reason: ExcludedJournalRef["reason"]): ExcludedJournalRef => ({
+      ...(journal.id != null ? { id: journal.id } : {}),
+      ...(journal.number != null ? { number: journal.number } : {}),
+      effective_date: journal.effective_date,
+      ...(journal.title != null ? { title: journal.title } : {}),
+      ...(journal.operation_type != null ? { operation_type: journal.operation_type } : {}),
+      reason,
+    });
+    if (journal.operation_type != null && excludedTypes.has(String(journal.operation_type))) {
+      if (report) {
+        report.journals.push(ref("operation_type"));
+        report.posting_count += postings.filter((p) => p.is_deleted !== true).length;
+      }
+      continue;
+    }
+    let journalReported = false;
     for (const posting of postings) {
       if (posting.is_deleted === true) {
+        continue;
+      }
+      if (excludedAccounts.has(posting.accounts_id)) {
+        if (report) {
+          if (!journalReported) {
+            report.journals.push(ref("account"));
+            journalReported = true;
+          }
+          report.posting_count += 1;
+        }
         continue;
       }
       const t = posting.type;

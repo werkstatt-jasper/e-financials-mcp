@@ -2,8 +2,11 @@ import { z } from "zod";
 import type { EFinancialsClient } from "../client.js";
 import {
   type AccountBalance,
+  type BalanceExclusionReport,
+  CLOSING_OPERATION_TYPES,
   computeAllBalances,
   EMPTY_LEDGER_WARNING,
+  RESULT_TRANSFER_ACCOUNT_IDS,
   sumCategory,
   UNKNOWN_ACCOUNT_BALANCE_WARNING,
 } from "../financial-statements/balances.js";
@@ -27,6 +30,7 @@ const balanceSheetSchema = z.object({
 const profitAndLossSchema = z.object({
   date_from: ymdDateString,
   date_to: ymdDateString,
+  include_closing: z.boolean().optional(),
 });
 
 function jsonResult(payload: unknown) {
@@ -46,6 +50,9 @@ function lineItems(balances: AccountBalance[]) {
 async function loadAccounts(client: EFinancialsClient): Promise<Account[]> {
   return client.getAllPages<Account>("/v1/accounts");
 }
+
+const CLOSING_EXCLUDED_NOTE =
+  "Year-end closing was excluded (account 9000 and YEAR_CLOSING/CLOSING journals) so the result is not netted to 0. Pass include_closing=true for the raw ledger.";
 
 function statementWarnings(balances: AccountBalance[]): string[] {
   const warnings: string[] = [];
@@ -185,12 +192,17 @@ export function createFinancialStatementTools(client: EFinancialsClient) {
 
     compute_profit_and_loss: {
       description:
-        "Compute a profit and loss statement (kasumiaruanne) for a required date_from/date_to window from registered journal postings. Tulud (revenue) and Kulud (expenses); net_profit = revenue − expenses. EUR base amounts. Only revenue and expense accounts are summed, so opening balances of balance-sheet accounts never enter the result. Journal amendments (parent_id / amendment_number, UI 'Parandus') are additive corrections; both the original and each amendment are counted.",
+        "Compute a profit and loss statement (kasumiaruanne) from registered journal postings for date_from/date_to, excluding year-end closing by default. Tulud (revenue) and Kulud (expenses); net_profit = revenue − expenses. EUR base amounts. Only revenue and expense accounts are summed, so opening balances of balance-sheet accounts never enter the result. Journal amendments (parent_id / amendment_number, UI 'Parandus') are additive corrections; both the original and each amendment are counted. Postings on account 9000 (Arvestuslik koondtulemus, result transfer) and journals with operation_type YEAR_CLOSING or CLOSING are skipped so a closed year does not net to 0, and the output lists them in excluded_closing and warnings. Set include_closing=true for the raw ledger. Trial balance and the balance sheet still include those entries, so a closed year still balances.",
       inputSchema: {
         type: "object" as const,
         properties: {
           date_from: { type: "string", description: "Period start YYYY-MM-DD (required)" },
           date_to: { type: "string", description: "Period end YYYY-MM-DD (required)" },
+          include_closing: {
+            type: "boolean",
+            description:
+              "Include year-end closing (account 9000 postings and YEAR_CLOSING/CLOSING journals). Default false.",
+          },
         },
         required: ["date_from", "date_to"],
       },
@@ -204,12 +216,28 @@ export function createFinancialStatementTools(client: EFinancialsClient) {
               end_date: args.date_to,
             }),
           ]);
+          const includeClosing = args.include_closing === true;
+          const exclusionReport: BalanceExclusionReport = { journals: [], posting_count: 0 };
           const balances = computeAllBalances(accounts, journals, {
             dateFrom: args.date_from,
             dateTo: args.date_to,
+            ...(includeClosing
+              ? {}
+              : {
+                  excludeOperationTypes: CLOSING_OPERATION_TYPES,
+                  excludeAccountIds: RESULT_TRANSFER_ACCOUNT_IDS,
+                  exclusionReport,
+                }),
           });
           const revenue = sumCategory(balances, "Tulud", "C");
           const expenses = sumCategory(balances, "Kulud", "D");
+          const warnings = statementWarnings(balances);
+          const excluded = exclusionReport.journals.length > 0;
+          if (excluded) {
+            warnings.push(
+              `${CLOSING_EXCLUDED_NOTE} Skipped ${exclusionReport.posting_count} posting(s) in ${exclusionReport.journals.length} journal(s); see excluded_closing.`,
+            );
+          }
           return jsonResult({
             period: { from: args.date_from, to: args.date_to },
             revenue: {
@@ -229,7 +257,18 @@ export function createFinancialStatementTools(client: EFinancialsClient) {
               total: expenses.total,
             },
             net_profit: roundMoney(revenue.total - expenses.total),
-            warnings: statementWarnings(balances),
+            ...(excluded
+              ? {
+                  excluded_closing: {
+                    note: CLOSING_EXCLUDED_NOTE,
+                    account_ids: [...RESULT_TRANSFER_ACCOUNT_IDS],
+                    operation_types: [...CLOSING_OPERATION_TYPES],
+                    posting_count: exclusionReport.posting_count,
+                    journals: exclusionReport.journals,
+                  },
+                }
+              : {}),
+            warnings,
           });
         } catch (err) {
           if (err instanceof JournalListTruncatedError) {

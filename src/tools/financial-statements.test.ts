@@ -370,3 +370,182 @@ describe("financial statement tools", () => {
     });
   });
 });
+
+describe("compute_profit_and_loss closing entries (GitLab #263)", () => {
+  // Amounts are fake. Account 9000 matches the standard chart: Tulud with balance_type D,
+  // so a debit (the usual close into equity) reduces revenue until it is excluded.
+  const closingChart: Account[] = [
+    account({ id: 1000, balance_type: "D", account_type_est: "Varad" }),
+    account({ id: 2970, balance_type: "C", account_type_est: "Omakapital" }),
+    account({ id: 3000, balance_type: "C", account_type_est: "Tulud" }),
+    account({ id: 4000, balance_type: "D", account_type_est: "Kulud" }),
+    account({ id: 9000, balance_type: "D", account_type_est: "Tulud" }),
+  ];
+  const sale: Journal = {
+    id: 101,
+    effective_date: "2025-06-01",
+    registered: true,
+    operation_type: "ENTRY",
+    postings: [
+      { accounts_id: 1000, type: "D", amount: 1000 },
+      { accounts_id: 3000, type: "C", amount: 1000 },
+    ],
+  };
+  const cost: Journal = {
+    id: 102,
+    effective_date: "2025-07-01",
+    registered: true,
+    postings: [
+      { accounts_id: 4000, type: "D", amount: 400 },
+      { accounts_id: 1000, type: "C", amount: 400 },
+    ],
+  };
+  const resultVia9000 = (operation_type: string, id = 103): Journal => ({
+    id,
+    number: 9001,
+    title: "Fake year result",
+    effective_date: "2025-12-31",
+    registered: true,
+    operation_type,
+    postings: [
+      { accounts_id: 9000, type: "D", amount: 600 },
+      { accounts_id: 2970, type: "C", amount: 600 },
+    ],
+  });
+  const closingOnResultAccounts = (operation_type: string): Journal => ({
+    id: 104,
+    effective_date: "2025-12-31",
+    registered: true,
+    operation_type,
+    postings: [
+      { accounts_id: 3000, type: "D", amount: 1000 },
+      { accounts_id: 4000, type: "C", amount: 400 },
+      { accounts_id: 2970, type: "C", amount: 600 },
+    ],
+  });
+
+  type PL = {
+    revenue: { total: number; items: { id: number }[] };
+    expenses: { total: number };
+    net_profit: number;
+    warnings: string[];
+    excluded_closing?: {
+      posting_count: number;
+      journals: { id?: number; reason: string; operation_type?: string }[];
+    };
+  };
+
+  let client: EFinancialsClient;
+  let tools: ReturnType<typeof createFinancialStatementTools>;
+
+  function mock(list: Journal[]) {
+    vi.mocked(client.getAllPages).mockResolvedValue(closingChart as never);
+    vi.mocked(client.get).mockResolvedValue({
+      items: list,
+      current_page: 1,
+      total_pages: 1,
+    } as never);
+  }
+
+  async function pl(args: Record<string, unknown> = {}): Promise<PL> {
+    return parseToolJson(
+      await tools.compute_profit_and_loss.handler({
+        date_from: "2025-01-01",
+        date_to: "2025-12-31",
+        ...args,
+      }),
+    ) as PL;
+  }
+
+  beforeEach(() => {
+    client = createMockClient();
+    tools = createFinancialStatementTools(client);
+  });
+
+  it("excludes account 9000 posted by an ordinary ENTRY journal by default", async () => {
+    mock([sale, cost, resultVia9000("ENTRY")]);
+    const data = await pl();
+    expect(data.revenue.total).toBe(1000);
+    expect(data.expenses.total).toBe(400);
+    expect(data.net_profit).toBe(600);
+    expect(data.revenue.items.map((i) => i.id)).not.toContain(9000);
+    expect(data.excluded_closing?.posting_count).toBe(1);
+    expect(data.excluded_closing?.journals).toEqual([
+      expect.objectContaining({ id: 103, reason: "account", operation_type: "ENTRY" }),
+    ]);
+    expect(data.warnings.some((w) => w.includes("include_closing=true"))).toBe(true);
+  });
+
+  it("include_closing:true keeps the old netted-to-0 result and adds no note", async () => {
+    mock([sale, cost, resultVia9000("ENTRY")]);
+    const data = await pl({ include_closing: true });
+    expect(data.revenue.total).toBe(400);
+    expect(data.net_profit).toBe(0);
+    expect(data.excluded_closing).toBeUndefined();
+    expect(data.warnings).toEqual([]);
+  });
+
+  it.each([
+    "YEAR_CLOSING",
+    "CLOSING",
+  ])("excludes whole %s journals that close revenue/expense accounts", async (type) => {
+    mock([sale, cost, closingOnResultAccounts(type)]);
+    const data = await pl();
+    expect(data.net_profit).toBe(600);
+    expect(data.excluded_closing?.journals).toEqual([
+      expect.objectContaining({ id: 104, reason: "operation_type", operation_type: type }),
+    ]);
+    expect(data.excluded_closing?.posting_count).toBe(3);
+
+    const raw = await pl({ include_closing: true });
+    expect(raw.net_profit).toBe(0);
+  });
+
+  it("leaves a period without closing entries unchanged and without a note", async () => {
+    mock([sale, cost]);
+    const data = await pl();
+    const raw = await pl({ include_closing: true });
+    expect(data.net_profit).toBe(600);
+    expect(data).toEqual(raw);
+    expect(data.excluded_closing).toBeUndefined();
+    expect(data.warnings).toEqual([]);
+  });
+
+  it("keeps journals with no operation_type that hit revenue on 12-31", async () => {
+    const lateSale: Journal = {
+      id: 105,
+      effective_date: "2025-12-31",
+      registered: true,
+      postings: [
+        { accounts_id: 1000, type: "D", amount: 50 },
+        { accounts_id: 3000, type: "C", amount: 50 },
+      ],
+    };
+    mock([sale, cost, lateSale]);
+    const data = await pl();
+    expect(data.revenue.total).toBe(1050);
+    expect(data.excluded_closing).toBeUndefined();
+  });
+
+  it("excludes closing journals of every year in a multi-year window", async () => {
+    const prevSale: Journal = { ...sale, id: 201, effective_date: "2024-03-01" };
+    mock([
+      prevSale,
+      sale,
+      cost,
+      { ...resultVia9000("YEAR_CLOSING", 202), effective_date: "2024-12-31" },
+      resultVia9000("ENTRY"),
+    ]);
+    const data = await pl({ date_from: "2024-01-01" });
+    expect(data.net_profit).toBe(1600);
+    expect(data.excluded_closing?.journals.map((j) => j.reason)).toEqual([
+      "operation_type",
+      "account",
+    ]);
+  });
+
+  it("rejects a non-boolean include_closing", async () => {
+    mock([]);
+    await expect(pl({ include_closing: "yes" })).rejects.toThrow();
+  });
+});
