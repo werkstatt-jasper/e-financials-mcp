@@ -289,3 +289,45 @@ describe("sumCategory", () => {
     expect(sumCategory(items, "Kohustused", "C").total).toBe(85);
   });
 });
+
+describe("computeAllBalances exclusions", () => {
+  const chart = [
+    account({ id: 3000, balance_type: "C", account_type_est: "Tulud" }),
+    account({ id: 9000, balance_type: "D", account_type_est: "Tulud" }),
+  ];
+  const bare = (operation_type?: string): Journal => ({
+    effective_date: "2025-12-31",
+    registered: true,
+    ...(operation_type ? { operation_type } : {}),
+    postings: [
+      { accounts_id: 9000, type: "D", amount: 5, is_deleted: true },
+      { accounts_id: 9000, type: "D", amount: 7 },
+      { accounts_id: 9000, type: "D", amount: 3 },
+      { accounts_id: 3000, type: "C", amount: 10 },
+    ],
+  });
+
+  it("skips excluded journals and accounts without a report", () => {
+    const b = computeAllBalances(chart, [bare("YEAR_CLOSING"), bare()], {
+      excludeOperationTypes: ["YEAR_CLOSING"],
+      excludeAccountIds: [9000],
+    });
+    expect(b.map((x) => [x.account_id, x.balance])).toEqual([[3000, 10]]);
+  });
+
+  it("reports journals without id/number/title and counts live postings once per journal", () => {
+    const report = { journals: [], posting_count: 0 };
+    computeAllBalances(chart, [bare("CLOSING"), bare()], {
+      excludeOperationTypes: ["CLOSING"],
+      excludeAccountIds: [9000],
+      exclusionReport: report,
+    });
+    expect(report).toEqual({
+      journals: [
+        { effective_date: "2025-12-31", operation_type: "CLOSING", reason: "operation_type" },
+        { effective_date: "2025-12-31", reason: "account" },
+      ],
+      posting_count: 5,
+    });
+  });
+});

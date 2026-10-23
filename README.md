@@ -170,7 +170,7 @@ Prefer to run it yourself over **stdio**? See [Quick start](#quick-start) below.
 |------|-------------|
 | `compute_trial_balance` | Compute a trial balance (käibeandmik) from registered journal postings. |
 | `compute_balance_sheet` | Compute a balance sheet (bilanss) as of date_to from registered journal postings (cumulative, including the opening-balance journal; do not add opening… |
-| `compute_profit_and_loss` | Compute a profit and loss statement (kasumiaruanne) for a required date_from/date_to window from registered journal postings. |
+| `compute_profit_and_loss` | Compute a profit and loss statement (kasumiaruanne) from registered journal postings for date_from/date_to, excluding year-end closing by default. |
 | `compute_receivables_aging` | Compute receivables aging from unpaid confirmed sale invoices. |
 | `compute_payables_aging` | Compute payables aging from unpaid confirmed purchase invoices. |
 | `compute_account_balance` | Compute the balance of one chart account from registered journal postings (EUR base_amount when present). |
@@ -449,7 +449,7 @@ RIK's GET returns `type: "C"` for every transaction, whichever direction it was 
 |------|-------------|
 | `compute_trial_balance` | Trial balance from registered journal postings (optional date window; EUR base). |
 | `compute_balance_sheet` | Balance sheet as of optional `date_to` (Varad / Kohustused / Omakapital + open P&L). |
-| `compute_profit_and_loss` | P&L for required `date_from` / `date_to` (Tulud / Kulud → `net_profit`). |
+| `compute_profit_and_loss` | P&L for required `date_from` / `date_to` (Tulud / Kulud → `net_profit`). Excludes year-end closing (account 9000, `YEAR_CLOSING`/`CLOSING` journals) by default and lists it in `excluded_closing`; `include_closing: true` for the raw ledger. |
 | `compute_receivables_aging` | Unpaid confirmed sale invoices by overdue bucket (optional `as_of_date`). |
 | `compute_payables_aging` | Unpaid confirmed purchase invoices by overdue bucket (optional `as_of_date`). |
 | `compute_account_balance` | One account balance from journal postings (optional client/date filters). |
