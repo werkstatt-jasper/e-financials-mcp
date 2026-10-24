@@ -106,8 +106,8 @@ function pickProductBody(
 const allProductBodyKeys = Object.keys(productBodySchemaProps) as ProductBodyKeys[];
 
 const productBodyFieldsSchema = z.object({
-  foreign_names: z.record(z.string()).optional(),
-  translations: z.record(z.string()).optional(),
+  foreign_names: z.record(z.string(), z.string()).optional(),
+  translations: z.record(z.string(), z.string()).optional(),
   name: z.string().optional(),
   code: z.string().optional(),
   cl_sale_articles_id: optionalPositiveInt,
