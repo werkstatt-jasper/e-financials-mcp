@@ -35,6 +35,15 @@ function extractCreatedId(data: Record<string, unknown>): number {
 const TEST_PREFIX = "INTTEST";
 const timestamp = Date.now();
 
+/**
+ * Today's date as YYYY-MM-DD. Register flows post to the ledger, and RIK
+ * rejects entries in a locked period (HTTP 409), so a fixed past date breaks
+ * once that period is closed. Today is in an open period.
+ */
+function openPeriodDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 describe("CRUD tool handlers (integration)", () => {
   let tools: ToolRecord;
 
@@ -222,8 +231,14 @@ describe("CRUD tool handlers (integration)", () => {
       const existingBanks = await tools.get_bank_accounts.handler({});
       const bankList = JSON.parse((existingBanks as ToolResult).content[0].text) as Array<{
         cl_banks_id?: number;
+        bank_name?: string | null;
       }>;
-      const clBanksId = bankList.find((b) => b.cl_banks_id)?.cl_banks_id;
+      const template = bankList.find((b) => b.cl_banks_id);
+      const clBanksId = template?.cl_banks_id;
+      // RIK requires bank_name when the classifier is "other bank" ("With other
+      // bank, it is mandatory to enter bank's name"). Copy the template's name,
+      // or send a fake one; for a named bank RIK accepts the extra field.
+      const bankName = template?.bank_name?.trim() || `${TEST_PREFIX} Bank`;
 
       const createResult = await tools.create_bank_account.handler({
         account_name_est: `${TEST_PREFIX} Pangakonto ${timestamp}`,
@@ -232,7 +247,7 @@ describe("CRUD tool handlers (integration)", () => {
         swift_code: "TSTBEE2X",
         default_salary_account: false,
         show_in_sale_invoices: false,
-        ...(clBanksId ? { cl_banks_id: clBanksId } : {}),
+        ...(clBanksId ? { cl_banks_id: clBanksId, bank_name: bankName } : {}),
       });
       const createData = parse(createResult);
       bankAccountId = extractCreatedId(createData);
@@ -366,7 +381,7 @@ describe("CRUD tool handlers (integration)", () => {
         clients_id: testClientId,
         client_name: `${TEST_PREFIX} Supplier ${timestamp}`,
         invoice_no: `PI-${timestamp}`,
-        invoice_date: "2025-06-15",
+        invoice_date: openPeriodDate(),
         total_amount: 100.0,
       });
       const createData = parse(createResult);
@@ -439,7 +454,7 @@ describe("CRUD tool handlers (integration)", () => {
       expect(picks.length).toBeGreaterThanOrEqual(2);
 
       const createResult = await tools.create_journal.handler({
-        effective_date: "2025-06-15",
+        effective_date: openPeriodDate(),
         title: `${TEST_PREFIX} Journal ${timestamp}`,
         postings: [
           {
