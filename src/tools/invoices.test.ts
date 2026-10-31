@@ -88,6 +88,7 @@ describe("invoice tools", () => {
       cl_templates_id: 5,
       clients_id: 1,
       cl_countries_id: "EST",
+      number_prefix: "INV",
       number_suffix: "1001",
       create_date: "2025-06-01",
       journal_date: "2025-06-01",
@@ -159,6 +160,7 @@ describe("invoice tools", () => {
         number_suffix: "500",
       }),
     );
+    expect(vi.mocked(client.post).mock.calls[0]?.[1]).not.toHaveProperty("number_prefix");
   });
 
   it("create_sales_invoice increments suffix from a raw-array series and existing invoices", async () => {
@@ -208,6 +210,113 @@ describe("invoice tools", () => {
     expect(client.post).toHaveBeenCalledWith(
       "/v1/sale_invoices",
       expect.objectContaining({ number_suffix: "1444" }),
+    );
+  });
+
+  it("create_sales_invoice applies the default series prefix and ignores prefix-less suffixes (GitLab #240)", async () => {
+    vi.mocked(client.get)
+      .mockResolvedValueOnce({
+        items: [
+          { id: 3, is_default: false, number_prefix: "NX", number_start_value: 1 },
+          { id: 4, is_default: true, number_prefix: "2026", number_start_value: 1 },
+        ],
+      } as never)
+      .mockResolvedValueOnce({ items: [{ id: 5 }] } as never)
+      .mockResolvedValueOnce({ items: [{ id: 42 }] } as never);
+    vi.mocked(client.getAllPages).mockResolvedValue([
+      { number_prefix: "2026", number_suffix: "41" },
+      { number_prefix: null, number_suffix: "7012" },
+      { number_prefix: "", number_suffix: "7013" },
+      { number_prefix: "NX", number_suffix: "900" },
+    ] as never);
+    vi.mocked(client.post).mockResolvedValue({ ...invoicesFixture.created_sales_invoice } as never);
+
+    await tools.create_sales_invoice.handler({
+      clients_id: 1,
+      invoice_date: "2026-01-10",
+      due_date: "2026-01-24",
+      rows: [{ description: "Item", quantity: 1, unit_price: 10 }],
+    });
+
+    const body = vi.mocked(client.post).mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(body.number_prefix).toBe("2026");
+    expect(body.number_suffix).toBe("42");
+  });
+
+  it("create_sales_invoice attaches the default series prefix to an explicit number_suffix (GitLab #240)", async () => {
+    vi.mocked(client.get)
+      .mockResolvedValueOnce({
+        items: [{ id: 4, is_default: true, number_prefix: "2026", number_start_value: 1 }],
+      } as never)
+      .mockResolvedValueOnce({ items: [{ id: 5 }] } as never)
+      .mockResolvedValueOnce({ items: [{ id: 42 }] } as never);
+    vi.mocked(client.post).mockResolvedValue({ ...invoicesFixture.created_sales_invoice } as never);
+
+    await tools.create_sales_invoice.handler({
+      clients_id: 1,
+      invoice_date: "2026-01-10",
+      due_date: "2026-01-24",
+      rows: [{ description: "Item", quantity: 1, unit_price: 10 }],
+      number_suffix: "42",
+    });
+
+    expect(client.getAllPages).not.toHaveBeenCalled();
+    expect(client.post).toHaveBeenCalledWith(
+      "/v1/sale_invoices",
+      expect.objectContaining({ number_prefix: "2026", number_suffix: "42" }),
+    );
+  });
+
+  it("create_sales_invoice uses an explicit number_prefix and continues that series", async () => {
+    vi.mocked(client.get)
+      .mockResolvedValueOnce({
+        items: [
+          { id: 3, is_default: false, number_prefix: "NX", number_start_value: 500 },
+          { id: 4, is_default: true, number_prefix: "2026", number_start_value: 1 },
+        ],
+      } as never)
+      .mockResolvedValueOnce({ items: [{ id: 5 }] } as never)
+      .mockResolvedValueOnce({ items: [{ id: 42 }] } as never);
+    vi.mocked(client.getAllPages).mockResolvedValue([
+      { number_prefix: "2026", number_suffix: "41" },
+      { number_prefix: "NX", number_suffix: "503" },
+    ] as never);
+    vi.mocked(client.post).mockResolvedValue({ ...invoicesFixture.created_sales_invoice } as never);
+
+    await tools.create_sales_invoice.handler({
+      clients_id: 1,
+      invoice_date: "2026-01-10",
+      due_date: "2026-01-24",
+      rows: [{ description: "Item", quantity: 1, unit_price: 10 }],
+      number_prefix: "NX",
+    });
+
+    expect(client.post).toHaveBeenCalledWith(
+      "/v1/sale_invoices",
+      expect.objectContaining({ number_prefix: "NX", number_suffix: "504" }),
+    );
+  });
+
+  it("create_sales_invoice treats an empty number_prefix as omitted", async () => {
+    vi.mocked(client.get)
+      .mockResolvedValueOnce({
+        items: [{ id: 4, is_default: true, number_prefix: "2026", number_start_value: 7 }],
+      } as never)
+      .mockResolvedValueOnce({ items: [{ id: 5 }] } as never)
+      .mockResolvedValueOnce({ items: [{ id: 42 }] } as never);
+    vi.mocked(client.post).mockResolvedValue({ ...invoicesFixture.created_sales_invoice } as never);
+
+    await tools.create_sales_invoice.handler({
+      clients_id: 1,
+      invoice_date: "2026-01-10",
+      due_date: "2026-01-24",
+      rows: [{ description: "Item", quantity: 1, unit_price: 10 }],
+      number_prefix: "",
+    });
+
+    expect(client.post).toHaveBeenCalledWith(
+      "/v1/sale_invoices",
+      expect.objectContaining({ number_prefix: "2026", number_suffix: "7" }),
     );
   });
 
@@ -818,6 +927,38 @@ describe("invoice tools", () => {
     expect(data.due_date).toBe("2025-01-15");
     expect(data.term_days).toBe(14);
     expect(data.create_date).toBe("2025-01-01");
+  });
+
+  it("update_sales_invoice sets number_prefix and preserves a stored prefix when omitted", async () => {
+    vi.mocked(client.get).mockResolvedValue({
+      ...invoicesFixture.sale_invoice_get_for_patch,
+      number_prefix: "2026",
+      number_suffix: "42",
+    } as never);
+    vi.mocked(client.patch).mockResolvedValue({ id: 88 } as never);
+
+    await tools.update_sales_invoice.handler({ id: 88, number_prefix: "NX" });
+    expect(client.patch).toHaveBeenLastCalledWith(
+      "/v1/sale_invoices/88",
+      expect.objectContaining({ number_prefix: "NX", number_suffix: "42" }),
+    );
+
+    await tools.update_sales_invoice.handler({ id: 88, description: "keep series" });
+    expect(client.patch).toHaveBeenLastCalledWith(
+      "/v1/sale_invoices/88",
+      expect.objectContaining({ number_prefix: "2026", number_suffix: "42" }),
+    );
+  });
+
+  it("update_sales_invoice leaves number_prefix out when none is stored or given", async () => {
+    vi.mocked(client.get).mockResolvedValue({
+      ...invoicesFixture.sale_invoice_get_for_patch,
+      number_prefix: null,
+    } as never);
+    vi.mocked(client.patch).mockResolvedValue({ id: 88 } as never);
+
+    await tools.update_sales_invoice.handler({ id: 88, description: "no series" });
+    expect(vi.mocked(client.patch).mock.calls[0]?.[1]).not.toHaveProperty("number_prefix");
   });
 
   it("delete_sales_invoice calls DELETE and returns API JSON", async () => {

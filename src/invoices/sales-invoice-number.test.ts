@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { extractSeriesList, nextSalesInvoiceSuffix } from "./sales-invoice-number.js";
+import {
+  defaultSalesInvoicePrefix,
+  extractSeriesList,
+  nextSalesInvoiceSuffix,
+  nextSalesInvoiceSuffixForPrefix,
+} from "./sales-invoice-number.js";
 
 describe("extractSeriesList", () => {
   it("parses a raw array", () => {
@@ -129,5 +134,73 @@ describe("nextSalesInvoiceSuffix", () => {
         ],
       ),
     ).toBe("21");
+  });
+});
+
+describe("defaultSalesInvoicePrefix", () => {
+  it("returns the prefix of the default series", () => {
+    expect(
+      defaultSalesInvoicePrefix([
+        { is_default: false, number_prefix: "NX" },
+        { is_default: true, number_prefix: "2026" },
+      ]),
+    ).toBe("2026");
+  });
+
+  it("returns undefined without a default series or with an empty prefix", () => {
+    expect(defaultSalesInvoicePrefix([])).toBeUndefined();
+    expect(defaultSalesInvoicePrefix([{ is_default: false, number_prefix: "NX" }])).toBeUndefined();
+    expect(defaultSalesInvoicePrefix([{ is_default: true, number_prefix: "" }])).toBeUndefined();
+    expect(defaultSalesInvoicePrefix([{ is_default: true }])).toBeUndefined();
+  });
+});
+
+describe("nextSalesInvoiceSuffixForPrefix", () => {
+  it("continues the prefixed series and ignores prefix-less invoices (GitLab #240)", () => {
+    expect(
+      nextSalesInvoiceSuffixForPrefix(
+        [{ is_default: true, number_prefix: "2026", number_start_value: 1 }],
+        [
+          { number_prefix: "2026", number_suffix: "41" },
+          { number_prefix: null, number_suffix: "7012" },
+          { number_prefix: "", number_suffix: "7013" },
+          { number_suffix: "7014" },
+          { number_prefix: "NX", number_suffix: "900" },
+          { number_prefix: "2026", number_suffix: "1787240058573" },
+        ],
+        "2026",
+      ),
+    ).toBe("42");
+  });
+
+  it("starts at the matching series number_start_value, preferring the default one", () => {
+    expect(
+      nextSalesInvoiceSuffixForPrefix(
+        [
+          { is_default: false, number_prefix: "NX", number_start_value: 10 },
+          { is_default: true, number_prefix: "NX", number_start_value: 20 },
+          { is_default: false, number_prefix: "2026", number_start_value: 99 },
+        ],
+        [{ number_prefix: null, number_suffix: "7012" }],
+        "NX",
+      ),
+    ).toBe("20");
+    expect(
+      nextSalesInvoiceSuffixForPrefix(
+        [{ is_default: false, number_prefix: "NX", number_start_value: 10 }],
+        [],
+        "NX",
+      ),
+    ).toBe("10");
+  });
+
+  it("starts at 1 when no series has the prefix", () => {
+    expect(
+      nextSalesInvoiceSuffixForPrefix(
+        [{ is_default: true, number_prefix: "2026", number_start_value: 99 }],
+        [{ number_prefix: "2026", number_suffix: "5" }],
+        "ZZ",
+      ),
+    ).toBe("1");
   });
 });
