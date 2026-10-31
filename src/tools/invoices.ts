@@ -6,6 +6,11 @@ import { mergePurchaseInvoiceItems } from "../invoices/merge-purchase-invoice-it
 import { withRegisterConflictHint } from "../invoices/register-conflict.js";
 import { registerPurchaseInvoiceWithRepair } from "../invoices/register-purchase-invoice.js";
 import {
+  daysBetweenYmd,
+  salesInvoiceDueDate,
+  withSalesInvoiceDueDate,
+} from "../invoices/sales-invoice-due-date.js";
+import {
   extractSeriesList,
   type InvoiceNumberFields,
   nextSalesInvoiceSuffix,
@@ -445,7 +450,8 @@ export function createInvoiceTools(client: EFinancialsClient) {
     },
 
     get_sales_invoice: {
-      description: "Get details of a specific sales invoice by ID",
+      description:
+        "Get details of a specific sales invoice by ID. Adds a derived due_date (YYYY-MM-DD, create_date + term_days) when the API response has none.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -463,7 +469,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
           content: [
             {
               type: "text" as const,
-              text: JSON.stringify(response, null, 2),
+              text: JSON.stringify(withSalesInvoiceDueDate(response), null, 2),
             },
           ],
         };
@@ -881,7 +887,8 @@ export function createInvoiceTools(client: EFinancialsClient) {
     },
 
     update_sales_invoice: {
-      description: "Update a sales invoice draft. Only works on PROJECT status invoices.",
+      description:
+        "Update a sales invoice draft. Only works on PROJECT status invoices. due_date sets the payment term (term_days) from invoice_date (or the stored invoice date) and is read back after saving; a warning is returned if the API did not store it. invoice_date without due_date keeps term_days.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -891,7 +898,11 @@ export function createInvoiceTools(client: EFinancialsClient) {
           },
           clients_id: { type: "number" },
           invoice_date: { type: "string" },
-          due_date: { type: "string" },
+          due_date: {
+            type: "string",
+            description:
+              "Payment due date (YYYY-MM-DD). Stored as term_days counted from invoice_date (or the current invoice date). Must not be before the invoice date. Omit to keep the current term.",
+          },
           rows: {
             type: "array",
             description:
@@ -952,6 +963,34 @@ export function createInvoiceTools(client: EFinancialsClient) {
         const currentResponse = await client.get(`/v1/sale_invoices/${id}`);
         const current = currentResponse as unknown as Record<string, unknown>;
 
+        // The API stores a payment term, not a due date: turn due_date into term_days.
+        let termDays = current.term_days;
+        const requestedDueDate = updateParams.due_date;
+        if (requestedDueDate !== undefined) {
+          const baseDate =
+            updateParams.invoice_date ??
+            (typeof current.create_date === "string" && current.create_date !== ""
+              ? current.create_date
+              : undefined);
+          if (baseDate === undefined) {
+            throw new Error(
+              `Cannot apply due_date: sales invoice ${id} has no create_date. Pass invoice_date together with due_date.`,
+            );
+          }
+          const days = daysBetweenYmd(baseDate, requestedDueDate);
+          if (days === null) {
+            throw new Error(
+              `Cannot apply due_date: invalid invoice date ${JSON.stringify(baseDate)}.`,
+            );
+          }
+          if (days < 0) {
+            throw new Error(
+              `due_date (${requestedDueDate}) is before the invoice date (${baseDate}).`,
+            );
+          }
+          termDays = days;
+        }
+
         let items = current.items;
         if (updateParams.rows) {
           const needsProductLookup = rowsNeedProductLookup(updateParams.rows);
@@ -975,7 +1014,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
           number_suffix: updateParams.number_suffix ?? current.number_suffix,
           create_date: updateParams.invoice_date ?? current.create_date,
           journal_date: updateParams.journal_date ?? current.journal_date,
-          term_days: current.term_days,
+          term_days: termDays,
           cl_currencies_id: updateParams.cl_currencies_id ?? current.cl_currencies_id,
           show_client_balance: current.show_client_balance,
           notes: updateParams.description ?? current.notes,
@@ -985,6 +1024,49 @@ export function createInvoiceTools(client: EFinancialsClient) {
         };
 
         const response = await client.patch<SalesInvoice>(`/v1/sale_invoices/${id}`, apiPayload);
+
+        if (requestedDueDate === undefined) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify(
+                  {
+                    success: true,
+                    message: `Sales invoice ${id} updated`,
+                    response,
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          };
+        }
+
+        // Read back: the PATCH response does not echo the invoice, so confirm the stored term.
+        let storedDueDate: string | undefined;
+        let readBackError: string | undefined;
+        try {
+          const readBack = (await client.get(`/v1/sale_invoices/${id}`)) as unknown as Record<
+            string,
+            unknown
+          >;
+          storedDueDate = salesInvoiceDueDate(readBack);
+        } catch (error) {
+          readBackError = error instanceof Error ? error.message : String(error);
+        }
+        const dueDateApplied = storedDueDate === requestedDueDate;
+        const warnings: string[] = [];
+        if (readBackError !== undefined) {
+          warnings.push(
+            `Could not read the invoice back to verify due_date (${readBackError}). Check it with get_sales_invoice.`,
+          );
+        } else if (!dueDateApplied) {
+          warnings.push(
+            `due_date was not applied: requested ${requestedDueDate}, the API stored ${storedDueDate ?? "no due date"}.`,
+          );
+        }
         return {
           content: [
             {
@@ -992,7 +1074,12 @@ export function createInvoiceTools(client: EFinancialsClient) {
               text: JSON.stringify(
                 {
                   success: true,
-                  message: `Sales invoice ${id} updated`,
+                  message: dueDateApplied
+                    ? `Sales invoice ${id} updated`
+                    : `Sales invoice ${id} updated, but due_date could not be confirmed`,
+                  due_date: storedDueDate ?? null,
+                  due_date_applied: dueDateApplied,
+                  ...(warnings.length > 0 ? { warnings } : {}),
                   response,
                 },
                 null,

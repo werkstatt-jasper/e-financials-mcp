@@ -637,6 +637,189 @@ describe("invoice tools", () => {
     );
   });
 
+  describe("update_sales_invoice due_date", () => {
+    const draft = () => ({
+      ...invoicesFixture.sale_invoice_get_for_patch,
+      id: 88,
+      status: "PROJECT",
+    });
+
+    it("sends term_days from due_date and confirms it on read-back", async () => {
+      vi.mocked(client.get)
+        .mockResolvedValueOnce(draft() as never)
+        .mockResolvedValueOnce({ ...draft(), term_days: 30 } as never);
+      vi.mocked(client.patch).mockResolvedValue({
+        ...invoicesFixture.patch_invoice_result,
+      } as never);
+
+      const result = await tools.update_sales_invoice.handler({ id: 88, due_date: "2025-01-31" });
+
+      expect(client.patch).toHaveBeenCalledWith(
+        "/v1/sale_invoices/88",
+        expect.objectContaining({ create_date: "2025-01-01", term_days: 30 }),
+      );
+      expect(client.get).toHaveBeenNthCalledWith(2, "/v1/sale_invoices/88");
+      const data = parseToolJson(result) as Record<string, unknown>;
+      expect(data).toMatchObject({
+        success: true,
+        message: "Sales invoice 88 updated",
+        due_date: "2025-01-31",
+        due_date_applied: true,
+      });
+      expect(data).not.toHaveProperty("warnings");
+    });
+
+    it("counts term_days from a new invoice_date", async () => {
+      vi.mocked(client.get)
+        .mockResolvedValueOnce(draft() as never)
+        .mockResolvedValueOnce({ ...draft(), create_date: "2025-02-10", term_days: 5 } as never);
+      vi.mocked(client.patch).mockResolvedValue({ id: 88 } as never);
+
+      const result = await tools.update_sales_invoice.handler({
+        id: 88,
+        invoice_date: "2025-02-10",
+        due_date: "2025-02-15",
+      });
+
+      expect(client.patch).toHaveBeenCalledWith(
+        "/v1/sale_invoices/88",
+        expect.objectContaining({ create_date: "2025-02-10", term_days: 5 }),
+      );
+      expect(parseToolJson(result)).toMatchObject({ due_date_applied: true });
+    });
+
+    it("warns when the API did not store the due date", async () => {
+      vi.mocked(client.get)
+        .mockResolvedValueOnce(draft() as never)
+        .mockResolvedValueOnce(draft() as never);
+      vi.mocked(client.patch).mockResolvedValue({ id: 88 } as never);
+
+      const result = await tools.update_sales_invoice.handler({ id: 88, due_date: "2025-01-31" });
+
+      const data = parseToolJson(result) as {
+        message: string;
+        due_date: string | null;
+        due_date_applied: boolean;
+        warnings: string[];
+      };
+      expect(data.due_date_applied).toBe(false);
+      expect(data.due_date).toBe("2025-01-15");
+      expect(data.message).toBe("Sales invoice 88 updated, but due_date could not be confirmed");
+      expect(data.warnings[0]).toContain("requested 2025-01-31, the API stored 2025-01-15");
+    });
+
+    it("warns when the read-back has no due date", async () => {
+      vi.mocked(client.get)
+        .mockResolvedValueOnce(draft() as never)
+        .mockResolvedValueOnce({ id: 88 } as never);
+      vi.mocked(client.patch).mockResolvedValue({ id: 88 } as never);
+
+      const result = await tools.update_sales_invoice.handler({ id: 88, due_date: "2025-01-31" });
+
+      const data = parseToolJson(result) as { due_date: unknown; warnings: string[] };
+      expect(data.due_date).toBeNull();
+      expect(data.warnings[0]).toContain("the API stored no due date");
+    });
+
+    it("keeps the update result and warns when the read-back fails", async () => {
+      vi.mocked(client.get)
+        .mockResolvedValueOnce(draft() as never)
+        .mockRejectedValueOnce(new Error("HTTP 503"));
+      vi.mocked(client.patch).mockResolvedValue({ id: 88 } as never);
+
+      const result = await tools.update_sales_invoice.handler({ id: 88, due_date: "2025-01-31" });
+
+      const data = parseToolJson(result) as {
+        success: boolean;
+        due_date_applied: boolean;
+        warnings: string[];
+      };
+      expect(data.success).toBe(true);
+      expect(data.due_date_applied).toBe(false);
+      expect(data.warnings[0]).toContain("Could not read the invoice back");
+      expect(data.warnings[0]).toContain("HTTP 503");
+    });
+
+    it("stringifies a non-Error read-back failure", async () => {
+      vi.mocked(client.get)
+        .mockResolvedValueOnce(draft() as never)
+        .mockRejectedValueOnce("socket closed");
+      vi.mocked(client.patch).mockResolvedValue({ id: 88 } as never);
+
+      const result = await tools.update_sales_invoice.handler({ id: 88, due_date: "2025-01-31" });
+      const data = parseToolJson(result) as { warnings: string[] };
+      expect(data.warnings[0]).toContain("socket closed");
+    });
+
+    it("rejects a due_date before the invoice date without patching", async () => {
+      vi.mocked(client.get).mockResolvedValueOnce(draft() as never);
+
+      await expect(
+        tools.update_sales_invoice.handler({ id: 88, due_date: "2024-12-31" }),
+      ).rejects.toThrow("due_date (2024-12-31) is before the invoice date (2025-01-01)");
+      expect(client.patch).not.toHaveBeenCalled();
+    });
+
+    it("asks for invoice_date when the stored invoice has no create_date", async () => {
+      vi.mocked(client.get).mockResolvedValueOnce({ ...draft(), create_date: null } as never);
+
+      await expect(
+        tools.update_sales_invoice.handler({ id: 88, due_date: "2025-01-31" }),
+      ).rejects.toThrow("Pass invoice_date together with due_date");
+      expect(client.patch).not.toHaveBeenCalled();
+    });
+
+    it("rejects an unparseable stored create_date", async () => {
+      vi.mocked(client.get).mockResolvedValueOnce({ ...draft(), create_date: "n/a" } as never);
+
+      await expect(
+        tools.update_sales_invoice.handler({ id: 88, due_date: "2025-01-31" }),
+      ).rejects.toThrow('invalid invoice date "n/a"');
+      expect(client.patch).not.toHaveBeenCalled();
+    });
+
+    it("keeps term_days and skips the read-back when due_date is omitted", async () => {
+      vi.mocked(client.get).mockResolvedValueOnce(draft() as never);
+      vi.mocked(client.patch).mockResolvedValue({ id: 88 } as never);
+
+      const result = await tools.update_sales_invoice.handler({
+        id: 88,
+        invoice_date: "2025-03-01",
+      });
+
+      expect(client.patch).toHaveBeenCalledWith(
+        "/v1/sale_invoices/88",
+        expect.objectContaining({ create_date: "2025-03-01", term_days: 14 }),
+      );
+      expect(client.get).toHaveBeenCalledTimes(1);
+      const data = parseToolJson(result) as Record<string, unknown>;
+      expect(data).toEqual({
+        success: true,
+        message: "Sales invoice 88 updated",
+        response: { id: 88 },
+      });
+    });
+  });
+
+  it("get_sales_invoice adds a derived due_date from create_date + term_days", async () => {
+    vi.mocked(client.get).mockResolvedValueOnce({
+      id: 501,
+      number: "TEST-0001",
+      clients_id: 1,
+      client_name: "Example Client OÜ",
+      create_date: "2025-01-01",
+      term_days: 14,
+      status: "PROJECT",
+      payment_status: null,
+    } as never);
+
+    const result = await tools.get_sales_invoice.handler({ id: 501 });
+    const data = parseToolJson(result) as Record<string, unknown>;
+    expect(data.due_date).toBe("2025-01-15");
+    expect(data.term_days).toBe(14);
+    expect(data.create_date).toBe("2025-01-01");
+  });
+
   it("delete_sales_invoice calls DELETE and returns API JSON", async () => {
     vi.mocked(client.delete).mockResolvedValue({ response_code: 0 } as never);
 
