@@ -235,6 +235,29 @@ const uploadPurchaseInvoiceFileSchema = z.object({
   filename: optionalString,
 });
 
+/**
+ * Suggested recipient(s) for an email delivery, as returned by
+ * GET /v1/sale_invoices/{id}/delivery_options (`can_send_email_addresses`).
+ * Returns undefined when the API suggests nothing or the lookup fails, so the
+ * deliver call goes out unchanged and RIK reports its own error.
+ */
+async function suggestedDeliveryEmailAddresses(
+  client: EFinancialsClient,
+  id: number,
+): Promise<string | undefined> {
+  try {
+    const options = (await client.get(`/v1/sale_invoices/${id}/delivery_options`)) as {
+      can_send_email_addresses?: unknown;
+    } | null;
+    const addresses = options?.can_send_email_addresses;
+    if (typeof addresses !== "string") return undefined;
+    const trimmed = addresses.trim();
+    return trimmed === "" ? undefined : trimmed;
+  } catch {
+    return undefined;
+  }
+}
+
 async function salesInvoiceItemContext(
   client: EFinancialsClient,
   rows: InvoiceRow[],
@@ -1277,7 +1300,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
 
     deliver_sales_invoice: {
       description:
-        "Send a sales invoice to the customer (PATCH .../deliver): e-invoice and/or email with optional subject and body. The API requires both send_einvoice and send_email; an omitted flag is sent as false, so set at least one to true.",
+        "Send a sales invoice to the customer (PATCH .../deliver): e-invoice and/or email with optional subject and body. The API requires both send_einvoice and send_email; an omitted flag is sent as false, so set at least one to true. With send_email and no email_addresses, the client's suggested address from delivery options is used.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -1295,7 +1318,8 @@ export function createInvoiceTools(client: EFinancialsClient) {
           },
           email_addresses: {
             type: "string",
-            description: "Recipient email addresses",
+            description:
+              "Recipient email addresses. If omitted and send_email is true, the addresses suggested by get_sales_invoice_delivery_options (can_send_email_addresses) are used.",
           },
           email_subject: {
             type: "string",
@@ -1316,7 +1340,14 @@ export function createInvoiceTools(client: EFinancialsClient) {
           send_einvoice: rest.send_einvoice ?? false,
           send_email: rest.send_email ?? false,
         };
-        if (rest.email_addresses !== undefined) body.email_addresses = rest.email_addresses;
+        if (rest.email_addresses !== undefined) {
+          body.email_addresses = rest.email_addresses;
+        } else if (body.send_email === true) {
+          // Same default as the e-Financials UI: use the address(es) the API
+          // suggests for this invoice (client invoice/contact email).
+          const suggested = await suggestedDeliveryEmailAddresses(client, id);
+          if (suggested !== undefined) body.email_addresses = suggested;
+        }
         if (rest.email_subject !== undefined) body.email_subject = rest.email_subject;
         if (rest.email_body !== undefined) body.email_body = rest.email_body;
 
