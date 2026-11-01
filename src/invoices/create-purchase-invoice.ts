@@ -90,6 +90,50 @@ function sumItemNet(items: ApiItem[]): number {
   );
 }
 
+function hasReversedVat(item: ApiItem): boolean {
+  return item.reversed_vat_id !== undefined && item.reversed_vat_id !== null;
+}
+
+/**
+ * A purchase-invoice PATCH replaces every line, so the totals repair resends the
+ * lines from GET. If GET returns a line without `reversed_vat_id`, resending it
+ * would clear the reverse-charge value the caller asked for (GitLab #243).
+ *
+ * Put back only values the caller requested on create, and only on lines where
+ * GET has no value. A value returned by the API is never overwritten. Lines are
+ * matched by position when the line counts agree; otherwise a value is restored
+ * only when every requested line asked for the same one. Returns the input array
+ * unchanged when nothing needs restoring.
+ */
+export function restoreRequestedReversedVat(
+  fetchedItems: ApiItem[],
+  requested: Array<number | undefined>,
+): ApiItem[] {
+  if (requested.every((value) => value === undefined)) {
+    return fetchedItems;
+  }
+  let valueFor: (idx: number) => number | undefined;
+  if (fetchedItems.length === requested.length) {
+    valueFor = (idx) => requested[idx];
+  } else {
+    const first = requested[0];
+    if (!requested.every((value) => value === first)) {
+      return fetchedItems;
+    }
+    valueFor = () => first;
+  }
+  let changed = false;
+  const restored = fetchedItems.map((item, idx) => {
+    const value = valueFor(idx);
+    if (value === undefined || hasReversedVat(item)) {
+      return item;
+    }
+    changed = true;
+    return { ...item, reversed_vat_id: value };
+  });
+  return changed ? restored : fetchedItems;
+}
+
 async function cleanupDraft(client: EFinancialsClient, id: number): Promise<boolean> {
   try {
     await client.patch(`/v1/purchase_invoices/${id}/invalidate`);
@@ -301,6 +345,16 @@ export async function createPurchaseInvoiceWithRepair(
       );
     }
 
+    const itemsNudged = itemsForPatch !== fetchedItems;
+
+    // Keep the requested reverse-charge VAT on the resent lines (GitLab #243).
+    // This alone does not trigger a PATCH; it rides along when totals or the
+    // rounding nudge already need one.
+    itemsForPatch = restoreRequestedReversedVat(
+      itemsForPatch,
+      apiItems.map((item) => item.reversed_vat_id as number | undefined),
+    );
+
     const fetchedTotals = fetched as { vat_price?: number | null; gross_price?: number | null };
     const currentGross = fetchedTotals.gross_price;
     const currentVat = fetchedTotals.vat_price;
@@ -312,7 +366,6 @@ export async function createPurchaseInvoiceWithRepair(
       currentVat === undefined ||
       currentVat === null ||
       roundMoney(Number(currentVat)) !== roundMoney(targetVat);
-    const itemsNudged = itemsForPatch !== fetchedItems;
 
     let repaired = false;
     if (grossNeedsRepair || vatNeedsRepair || itemsNudged) {

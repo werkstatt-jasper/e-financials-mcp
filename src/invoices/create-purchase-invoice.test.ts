@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EFinancialsClient } from "../client.js";
 import { createMockClient } from "../tools/test-helpers.js";
-import { createPurchaseInvoiceWithRepair } from "./create-purchase-invoice.js";
+import {
+  createPurchaseInvoiceWithRepair,
+  restoreRequestedReversedVat,
+} from "./create-purchase-invoice.js";
 import { clearAllVatWarnings } from "./purchase-vat-defaults.js";
 
 describe("createPurchaseInvoiceWithRepair", () => {
@@ -633,5 +636,145 @@ describe("createPurchaseInvoiceWithRepair", () => {
         ]),
       }),
     );
+  });
+
+  describe("reverse-charge VAT (GitLab #243)", () => {
+    const fakeInvoice = {
+      clients_id: 1,
+      client_name: "Example Supplier Ltd (test)",
+      invoice_no: "TEST-RC-1",
+      invoice_date: "2025-06-01",
+    };
+
+    function mockFetchedItems(items: Array<Record<string, unknown>>, gross = 0, vat = 0) {
+      vi.mocked(client.get).mockImplementation(async (path: string) => {
+        if (path === "/v1/vat_info") {
+          return { vat_number: "EE000000000", tax_refnumber: "1" };
+        }
+        if (path.startsWith("/v1/purchase_invoices/")) {
+          return { id: 42, status: "PROJECT", gross_price: gross, vat_price: vat, items };
+        }
+        return {};
+      });
+    }
+
+    function patchedItems(): Array<Record<string, unknown>> {
+      const call = vi
+        .mocked(client.patch)
+        .mock.calls.find((c) => c[0] === "/v1/purchase_invoices/42");
+      return (call?.[1] as { items: Array<Record<string, unknown>> }).items;
+    }
+
+    it("posts the top-level reversed_vat_id on the synthesized line", async () => {
+      mockFetchedItems([{ id: 1, total_net_price: 100, vat_amount: 0, reversed_vat_id: 7 }]);
+      await createPurchaseInvoiceWithRepair(client, {
+        ...fakeInvoice,
+        total_amount: 100,
+        reversed_vat_id: 7,
+      });
+      expect(client.post).toHaveBeenCalledWith(
+        "/v1/purchase_invoices",
+        expect.objectContaining({ items: [expect.objectContaining({ reversed_vat_id: 7 })] }),
+      );
+    });
+
+    it("keeps reversed_vat_id when the repair GET omits it", async () => {
+      mockFetchedItems([{ id: 1, total_net_price: 100, vat_amount: 0 }]);
+      const result = await createPurchaseInvoiceWithRepair(client, {
+        ...fakeInvoice,
+        total_amount: 100,
+        reversed_vat_id: 7,
+      });
+      expect(result.repaired).toBe(true);
+      expect(patchedItems()).toEqual([
+        { id: 1, total_net_price: 100, vat_amount: 0, reversed_vat_id: 7 },
+      ]);
+    });
+
+    it("keeps per-line reversed_vat_id when the repair GET returns null", async () => {
+      mockFetchedItems([
+        { id: 1, total_net_price: 50, vat_amount: 0, reversed_vat_id: null },
+        { id: 2, total_net_price: 30, vat_amount: 0, reversed_vat_id: null },
+        { id: 3, total_net_price: 20, vat_amount: 0, reversed_vat_id: null },
+      ]);
+      await createPurchaseInvoiceWithRepair(client, {
+        ...fakeInvoice,
+        items: [
+          { custom_title: "Test line A", total_net_price: 50, reversed_vat_id: 4 },
+          { custom_title: "Test line B", total_net_price: 30 },
+          { custom_title: "Test line C", total_net_price: 20, reversed_vat_id: 7 },
+        ],
+      });
+      expect(patchedItems().map((i) => i.reversed_vat_id)).toEqual([4, null, 7]);
+    });
+
+    it("never overwrites a reversed_vat_id returned by the API", async () => {
+      mockFetchedItems([{ id: 1, total_net_price: 100, vat_amount: 0, reversed_vat_id: 4 }]);
+      await createPurchaseInvoiceWithRepair(client, {
+        ...fakeInvoice,
+        total_amount: 100,
+        reversed_vat_id: 7,
+      });
+      expect(patchedItems()[0].reversed_vat_id).toBe(4);
+    });
+
+    it("does not PATCH only to restore reversed_vat_id when totals already match", async () => {
+      mockFetchedItems([{ id: 1, total_net_price: 100, vat_amount: 0 }], 100, 0);
+      const result = await createPurchaseInvoiceWithRepair(client, {
+        ...fakeInvoice,
+        total_amount: 100,
+        reversed_vat_id: 7,
+      });
+      expect(result.repaired).toBe(false);
+      expect(client.patch).not.toHaveBeenCalled();
+    });
+
+    it("keeps reversed_vat_id together with the rounding nudge", async () => {
+      mockFetchedItems([
+        { id: 1, total_net_price: 100, vat_amount: 24, project_no_vat_gross_price: 124 },
+      ]);
+      await createPurchaseInvoiceWithRepair(client, {
+        ...fakeInvoice,
+        total_amount: 124.01,
+        vat_amount: 24.01,
+        vat_rate: 24,
+        reversed_vat_id: 4,
+      });
+      expect(patchedItems()[0]).toEqual(
+        expect.objectContaining({ project_no_vat_gross_price: 124.01, reversed_vat_id: 4 }),
+      );
+    });
+  });
+});
+
+describe("restoreRequestedReversedVat", () => {
+  it("returns the same array when nothing was requested", () => {
+    const items = [{ id: 1 }];
+    expect(restoreRequestedReversedVat(items, [undefined])).toBe(items);
+  });
+
+  it("returns the same array when every line already has a value", () => {
+    const items = [{ id: 1, reversed_vat_id: 7 }];
+    expect(restoreRequestedReversedVat(items, [7])).toBe(items);
+  });
+
+  it("matches lines by position when counts agree", () => {
+    expect(restoreRequestedReversedVat([{ id: 1 }, { id: 2 }], [undefined, 4])).toEqual([
+      { id: 1 },
+      { id: 2, reversed_vat_id: 4 },
+    ]);
+  });
+
+  it("applies a uniform value when line counts differ", () => {
+    expect(restoreRequestedReversedVat([{ id: 1 }, { id: 2 }], [7])).toEqual([
+      { id: 1, reversed_vat_id: 7 },
+      { id: 2, reversed_vat_id: 7 },
+    ]);
+  });
+
+  it("leaves lines alone when counts differ and requested values are mixed", () => {
+    const items = [{ id: 1 }];
+    expect(restoreRequestedReversedVat(items, [7, 4])).toBe(items);
+    expect(restoreRequestedReversedVat(items, [7, undefined])).toBe(items);
   });
 });
