@@ -196,6 +196,10 @@ const updatePurchaseInvoiceItemSchema = purchaseInvoiceItemSchema.extend({
   cl_fringe_benefits_id: optionalPositiveInt,
 });
 
+function confirmedPurchaseInvoiceUpdateError(id: number): string {
+  return `Purchase invoice ${id} is CONFIRMED. Confirmed purchase invoice lines can't be changed through the API. Take the invoice back to draft in the e-Financials UI, then retry update_purchase_invoice. There is no unregister API.`;
+}
+
 const updatePurchaseInvoiceSchema = z.object({
   id: positiveInt,
   clients_id: optionalPositiveInt,
@@ -1334,7 +1338,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
 
     update_purchase_invoice: {
       description:
-        "Update a purchase invoice draft (PROJECT). Merges header fields with the current GET. Optional items[] patches existing lines by id (or appends lines without id). purchase_accounts_id is API-derived from products_id / cl_purchase_articles_id — set those instead of writing the account id directly.",
+        "Update a purchase invoice draft (PROJECT). Merges header fields with the current GET. Optional items[] patches existing lines by id (or appends lines without id). purchase_accounts_id is API-derived from products_id / cl_purchase_articles_id — set those instead of writing the account id directly. CONFIRMED invoices are refused before any PATCH: confirmed purchase invoice lines can't be changed through the API. Take the invoice back to draft in the e-Financials UI first; there is no unregister API.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -1422,6 +1426,11 @@ export function createInvoiceTools(client: EFinancialsClient) {
         // Fetch current invoice to get required fields (API requires all fields in PATCH)
         const currentResponse = await client.get(`/v1/purchase_invoices/${id}`);
         const current = currentResponse as unknown as Record<string, unknown>;
+        if (current.status === "CONFIRMED") {
+          // RIK answers a PATCH on a CONFIRMED invoice with a misleading
+          // periodization error, and has no endpoint to go back to PROJECT.
+          throw new Error(confirmedPurchaseInvoiceUpdateError(id));
+        }
         assertCashAccountsDimensionWritable({
           requested: updateParams.cash_accounts_dimensions_id,
           current: current.cash_accounts_dimensions_id,
