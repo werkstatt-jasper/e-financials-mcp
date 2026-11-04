@@ -1550,6 +1550,60 @@ describe("invoice tools", () => {
     expect(data.success).toBe(true);
   });
 
+  it("update_purchase_invoice refuses CONFIRMED invoices before the PATCH", async () => {
+    vi.mocked(client.get).mockResolvedValueOnce({
+      ...invoicesFixture.purchase_get_for_patch,
+      status: "CONFIRMED",
+    } as never);
+
+    const call = tools.update_purchase_invoice.handler({
+      id: 11,
+      items: [{ id: 101, cl_vat_articles_id: 16 }],
+    });
+
+    await expect(call).rejects.toThrow(
+      /Purchase invoice 11 is CONFIRMED\. Confirmed purchase invoice lines can't be changed through the API\. Take the invoice back to draft in the e-Financials UI.*There is no unregister API\./,
+    );
+    expect(client.get).toHaveBeenCalledWith("/v1/purchase_invoices/11");
+    expect(client.patch).not.toHaveBeenCalled();
+  });
+
+  it("update_purchase_invoice refuses header-only updates on CONFIRMED invoices", async () => {
+    vi.mocked(client.get).mockResolvedValueOnce({
+      ...invoicesFixture.purchase_get_for_patch,
+      status: "CONFIRMED",
+    } as never);
+
+    await expect(
+      tools.update_purchase_invoice.handler({ id: 11, description: "x" }),
+    ).rejects.toThrow(/no unregister API/);
+    expect(client.patch).not.toHaveBeenCalled();
+  });
+
+  it("update_purchase_invoice still patches PROJECT invoices", async () => {
+    vi.mocked(client.get).mockResolvedValueOnce({
+      ...invoicesFixture.purchase_get_for_patch,
+      status: "PROJECT",
+    } as never);
+    vi.mocked(client.patch).mockResolvedValue({
+      ...invoicesFixture.patch_purchase_result,
+    } as never);
+
+    await tools.update_purchase_invoice.handler({
+      id: 11,
+      items: [{ id: 101, cl_vat_articles_id: 16 }],
+    });
+
+    expect(client.patch).toHaveBeenCalledWith("/v1/purchase_invoices/11", expect.any(Object));
+  });
+
+  it("update_purchase_invoice description explains the CONFIRMED refusal", () => {
+    const description = tools.update_purchase_invoice.description;
+    expect(description).toMatch(/^Update a purchase invoice draft \(PROJECT\)\./);
+    expect(description).toMatch(/CONFIRMED invoices are refused before any PATCH/);
+    expect(description).toMatch(/no unregister API/);
+  });
+
   it("update_purchase_invoice applies reversed_vat_id to each existing item", async () => {
     vi.mocked(client.get).mockResolvedValueOnce({
       ...invoicesFixture.purchase_get_for_patch,
