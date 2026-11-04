@@ -963,6 +963,93 @@ describe("invoice tools", () => {
     });
   });
 
+  it("deliver_sales_invoice defaults email_addresses from delivery options when send_email is set", async () => {
+    vi.mocked(client.get).mockResolvedValue({
+      can_send_einvoice: false,
+      can_send_email: true,
+      can_send_email_addresses: " billing@example.test ",
+    } as never);
+    vi.mocked(client.patch).mockResolvedValue({ response_code: 0 } as never);
+
+    const result = await tools.deliver_sales_invoice.handler({
+      id: 21,
+      send_email: true,
+      email_subject: "Invoice",
+    });
+
+    expect(client.get).toHaveBeenCalledWith("/v1/sale_invoices/21/delivery_options");
+    expect(client.patch).toHaveBeenCalledWith("/v1/sale_invoices/21/deliver", {
+      send_einvoice: false,
+      send_email: true,
+      email_addresses: "billing@example.test",
+      email_subject: "Invoice",
+    });
+    expect(parseToolJson(result)).toEqual({ response_code: 0 });
+  });
+
+  it("deliver_sales_invoice sends explicit email_addresses unchanged without a lookup", async () => {
+    vi.mocked(client.patch).mockResolvedValue({ response_code: 0 } as never);
+
+    await tools.deliver_sales_invoice.handler({
+      id: 22,
+      send_email: true,
+      email_addresses: "other@example.test",
+    });
+
+    expect(client.get).not.toHaveBeenCalled();
+    expect(client.patch).toHaveBeenCalledWith("/v1/sale_invoices/22/deliver", {
+      send_einvoice: false,
+      send_email: true,
+      email_addresses: "other@example.test",
+    });
+  });
+
+  it("deliver_sales_invoice does not look up addresses when send_email is not set", async () => {
+    vi.mocked(client.patch).mockResolvedValue({ response_code: 0 } as never);
+
+    await tools.deliver_sales_invoice.handler({ id: 23, send_einvoice: true, send_email: false });
+
+    expect(client.get).not.toHaveBeenCalled();
+    expect(client.patch).toHaveBeenCalledWith("/v1/sale_invoices/23/deliver", {
+      send_einvoice: true,
+      send_email: false,
+    });
+  });
+
+  it.each([
+    ["missing", { can_send_einvoice: false, can_send_email: false }],
+    ["blank", { can_send_einvoice: false, can_send_email: false, can_send_email_addresses: "  " }],
+    [
+      "not a string",
+      { can_send_einvoice: false, can_send_email: false, can_send_email_addresses: 5 },
+    ],
+    ["null response", null],
+  ])("deliver_sales_invoice leaves email_addresses unset when the suggestion is %s", async (_label, options) => {
+    vi.mocked(client.get).mockResolvedValue(options as never);
+    vi.mocked(client.patch).mockResolvedValue({ response_code: 0 } as never);
+
+    await tools.deliver_sales_invoice.handler({ id: 24, send_email: true });
+
+    expect(client.patch).toHaveBeenCalledWith("/v1/sale_invoices/24/deliver", {
+      send_einvoice: false,
+      send_email: true,
+    });
+  });
+
+  it("deliver_sales_invoice keeps the RIK error when no address exists and the lookup fails", async () => {
+    vi.mocked(client.get).mockRejectedValue(new Error("409 Conflict"));
+    vi.mocked(client.patch).mockRejectedValue(new Error("Buyer's e-mail address not found"));
+
+    await expect(tools.deliver_sales_invoice.handler({ id: 25, send_email: true })).rejects.toThrow(
+      "Buyer's e-mail address not found",
+    );
+
+    expect(client.patch).toHaveBeenCalledWith("/v1/sale_invoices/25/deliver", {
+      send_einvoice: false,
+      send_email: true,
+    });
+  });
+
   it("upload_purchase_invoice_file uses Content-Disposition over download.aspx", async () => {
     const pdf = Buffer.from("%PDF-1.4");
     const fetchMock = vi.fn().mockResolvedValue({
