@@ -11,9 +11,11 @@ import {
   withSalesInvoiceDueDate,
 } from "../invoices/sales-invoice-due-date.js";
 import {
+  defaultSalesInvoicePrefix,
   extractSeriesList,
   type InvoiceNumberFields,
   nextSalesInvoiceSuffix,
+  nextSalesInvoiceSuffixForPrefix,
 } from "../invoices/sales-invoice-number.js";
 import {
   buildProductUnitById,
@@ -107,6 +109,13 @@ const validateInvoiceDataSchema = z.object({
   base_net_price: optionalNumber,
 });
 
+/** OpenAPI SaleInvoices.number_prefix (max 30); empty or null means "not set". */
+const optionalNumberPrefix = z
+  .string()
+  .max(30)
+  .nullish()
+  .transform((v) => (v == null || v === "" ? undefined : v));
+
 const invoiceRowSchema = z.object({
   description: z.string().min(1),
   quantity: z.coerce.number(),
@@ -129,6 +138,7 @@ const createSalesInvoiceSchema = z.object({
   cl_countries_id: optionalString,
   show_client_balance: optionalBoolean,
   number_suffix: optionalString,
+  number_prefix: optionalNumberPrefix,
   trade_secret: optionalBoolean,
   invoice_info: optionalString,
   journal_date: optionalYmd,
@@ -192,6 +202,7 @@ const updateSalesInvoiceSchema = z.object({
   invoice_info: optionalString,
   journal_date: optionalYmd,
   number_suffix: optionalString,
+  number_prefix: optionalNumberPrefix,
 });
 
 const updatePurchaseInvoiceItemSchema = purchaseInvoiceItemSchema.extend({
@@ -599,7 +610,12 @@ export function createInvoiceTools(client: EFinancialsClient) {
           number_suffix: {
             type: "string",
             description:
-              "Invoice number suffix. Omit to continue the default series (last matching suffix + 1, or number_start_value). Never a timestamp.",
+              "Invoice number suffix. Omit to continue the series of number_prefix (last suffix with that prefix + 1, or the series number_start_value). Never a timestamp.",
+          },
+          number_prefix: {
+            type: "string",
+            description:
+              "Invoice number prefix (invoice series, see list_invoice_series). Omit to use the default series prefix (is_default). Invoice number = prefix + suffix.",
           },
           trade_secret: {
             type: "boolean",
@@ -655,13 +671,20 @@ export function createInvoiceTools(client: EFinancialsClient) {
         const invoices = Array.isArray(listedInvoices)
           ? (listedInvoices as InvoiceNumberFields[])
           : [];
-        const numberSuffix = args.number_suffix ?? nextSalesInvoiceSuffix(seriesList, invoices);
+        // GitLab #240: the API does not apply the default series prefix on its own.
+        const numberPrefix = args.number_prefix ?? defaultSalesInvoicePrefix(seriesList);
+        const numberSuffix =
+          args.number_suffix ??
+          (numberPrefix === undefined
+            ? nextSalesInvoiceSuffix(seriesList, invoices)
+            : nextSalesInvoiceSuffixForPrefix(seriesList, invoices, numberPrefix));
 
         const apiPayload = {
           sale_invoice_type: args.sale_invoice_type ?? "INVOICE",
           cl_templates_id: args.cl_templates_id ?? defaultTemplate.id ?? 1,
           clients_id: args.clients_id,
           cl_countries_id: args.cl_countries_id ?? "EST",
+          ...(numberPrefix !== undefined ? { number_prefix: numberPrefix } : {}),
           number_suffix: numberSuffix,
           create_date: args.invoice_date,
           journal_date: args.journal_date ?? args.invoice_date,
@@ -977,6 +1000,11 @@ export function createInvoiceTools(client: EFinancialsClient) {
             description:
               "Invoice number suffix. Only PROJECT drafts. Omit to keep the current value.",
           },
+          number_prefix: {
+            type: "string",
+            description:
+              "Invoice number prefix (invoice series, see list_invoice_series). Only PROJECT drafts. Omit to keep the current value.",
+          },
         },
         required: ["id"],
       },
@@ -1032,12 +1060,19 @@ export function createInvoiceTools(client: EFinancialsClient) {
           items = mapSalesInvoiceItems(updateParams.rows, itemContext);
         }
 
+        const currentPrefix =
+          typeof current.number_prefix === "string" && current.number_prefix !== ""
+            ? current.number_prefix
+            : undefined;
+        const numberPrefix = updateParams.number_prefix ?? currentPrefix;
+
         // Build payload with existing values as defaults, override with provided updates
         const apiPayload = {
           sale_invoice_type: current.sale_invoice_type,
           cl_templates_id: current.cl_templates_id,
           clients_id: updateParams.clients_id ?? current.clients_id,
           cl_countries_id: current.cl_countries_id,
+          ...(numberPrefix !== undefined ? { number_prefix: numberPrefix } : {}),
           number_suffix: updateParams.number_suffix ?? current.number_suffix,
           create_date: updateParams.invoice_date ?? current.create_date,
           journal_date: updateParams.journal_date ?? current.journal_date,

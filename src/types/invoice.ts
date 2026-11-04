@@ -82,6 +82,8 @@ export interface CreateSalesInvoiceParams {
   cl_countries_id?: string;
   show_client_balance?: boolean;
   number_suffix?: string;
+  /** OpenAPI SaleInvoices.number_prefix; omitted on create = default series prefix. */
+  number_prefix?: string;
   trade_secret?: boolean;
   invoice_info?: string;
   journal_date?: string;
