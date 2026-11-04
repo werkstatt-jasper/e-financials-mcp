@@ -55,7 +55,7 @@ Prefer to run it yourself over **stdio**? See [Quick start](#quick-start) below.
 | `list_sales_invoices` | List sales invoices (invoices you send to customers) with optional filters. |
 | `list_purchase_invoices` | List purchase invoices (invoices from suppliers you need to pay) with optional filters. |
 | `list_unpaid_invoices` | List all unpaid invoices (both sales and purchase). |
-| `get_sales_invoice` | Get details of a specific sales invoice by ID |
+| `get_sales_invoice` | Get details of a specific sales invoice by ID. |
 | `get_purchase_invoice` | Get details of a specific purchase invoice by ID |
 | `create_sales_invoice` | Create a new sales invoice draft. |
 | `validate_invoice_data` | Read-only pre-booking checks for invoice totals, line nets/VAT, calendar dates, Estonian standard VAT rate vs invoice date, and foreign-currency rate… |
@@ -348,12 +348,12 @@ RIK's GET returns `type: "C"` for every transaction, whichever direction it was 
 | `list_sales_invoices` | Sales invoices with filters. |
 | `list_purchase_invoices` | Purchase invoices with filters. The e-arveldaja incoming e-invoice inbox is not in the public RIK API; accept e-invoices in the web UI and they appear here as `PROJECT` drafts with lines on suspense account 9900 ("digiarve kulu vahekonto") — recode them with `update_purchase_invoice`, then confirm with `register_purchase_invoice`. |
 | `list_unpaid_invoices` | Unpaid sales/purchase invoices. |
-| `get_sales_invoice` | One sales invoice. |
+| `get_sales_invoice` | One sales invoice. Adds a derived `due_date` (`create_date` + `term_days`) when the API returns none. |
 | `get_purchase_invoice` | One purchase invoice. |
 | `create_sales_invoice` | Draft sales invoice. Optional `trade_secret`, printed `invoice_info` (not `notes` / not `get_invoice_info`), and `journal_date` (defaults to `invoice_date`). Omitted `number_suffix` continues the default series (never a timestamp). Row `unit` is optional; omitted copies the product unit. |
 | `validate_invoice_data` | Read-only pre-booking checks (totals, dates, VAT rates, FX). Free-tier on hosted SaaS. |
 | `create_purchase_invoice` | Draft purchase invoice with VAT defaults + create-then-repair totals. Single-line params or `items[]`; non-EUR needs `currency_rate`. Supports `reversed_vat_id` (7 = non-EU, 4 = EU). Optional `cl_vat_articles_id` (`16` = sõiduauto 100%; omit → fallback `1` when VAT-registered). |
-| `update_sales_invoice` | PATCH sales draft. Optional `trade_secret`, `invoice_info`, `journal_date`, and `number_suffix`; omitted keeps stored values. `invoice_date` does not overwrite `journal_date`. `rows` use the same friendly keys as create (including optional `unit`) and are remapped to API items. |
+| `update_sales_invoice` | PATCH sales draft. Optional `trade_secret`, `invoice_info`, `journal_date`, and `number_suffix`; omitted keeps stored values. `invoice_date` does not overwrite `journal_date`. `rows` use the same friendly keys as create (including optional `unit`) and are remapped to API items. `due_date` sets `term_days` from `invoice_date` (or the stored date) and is read back; the result carries `due_date`, `due_date_applied` and a warning if it was not stored. `invoice_date` alone keeps `term_days`. |
 | `delete_sales_invoice` | DELETE sales invoice. |
 | `register_sales_invoice` | Confirm sales invoice. |
 | `invalidate_sales_invoice` | Reverse sales confirmation. |

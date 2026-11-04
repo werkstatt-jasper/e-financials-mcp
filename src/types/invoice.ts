@@ -36,6 +36,7 @@ export interface SalesInvoice {
   // Legacy aliases (not returned by the live API)
   invoice_no?: string;
   invoice_date?: string;
+  /** Not returned by the live API; get_sales_invoice derives it from create_date + term_days. */
   due_date?: string;
   total_amount?: number;
   vat_amount?: number;
