@@ -148,6 +148,10 @@ describe("journalListMaxPagesFromEnv", () => {
     vi.unstubAllEnvs();
   });
 
+  it("defaults to 2000 so a full-year ledger of ~1508 pages fits", () => {
+    expect(JOURNAL_LIST_MAX_PAGES).toBe(2000);
+  });
+
   it.each([
     [undefined, JOURNAL_LIST_MAX_PAGES],
     ["", JOURNAL_LIST_MAX_PAGES],
