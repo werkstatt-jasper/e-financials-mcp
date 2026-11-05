@@ -255,27 +255,104 @@ const uploadPurchaseInvoiceFileSchema = z.object({
   filename: optionalString,
 });
 
+function nonBlankString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed;
+}
+
+/** Outcome of one address lookup: an address, a clean "none", or a failed request. */
+type AddressLookup = { kind: "found"; addresses: string } | { kind: "none" } | { kind: "failed" };
+
 /**
  * Suggested recipient(s) for an email delivery, as returned by
  * GET /v1/sale_invoices/{id}/delivery_options (`can_send_email_addresses`).
- * Returns undefined when the API suggests nothing or the lookup fails, so the
- * deliver call goes out unchanged and RIK reports its own error.
+ * Some responses have `can_send_email: true` with `can_send_email_addresses: null`.
  */
 async function suggestedDeliveryEmailAddresses(
   client: EFinancialsClient,
   id: number,
-): Promise<string | undefined> {
+): Promise<AddressLookup> {
   try {
     const options = (await client.get(`/v1/sale_invoices/${id}/delivery_options`)) as {
       can_send_email_addresses?: unknown;
     } | null;
-    const addresses = options?.can_send_email_addresses;
-    if (typeof addresses !== "string") return undefined;
-    const trimmed = addresses.trim();
-    return trimmed === "" ? undefined : trimmed;
+    const addresses = nonBlankString(options?.can_send_email_addresses);
+    return addresses === undefined ? { kind: "none" } : { kind: "found", addresses };
   } catch {
-    return undefined;
+    return { kind: "failed" };
   }
+}
+
+/**
+ * Invoice address(es) from the buyer's client card (GET /v1/sale_invoices/{id}
+ * for `clients_id`, then GET /v1/clients/{clients_id}). Uses the addresses the
+ * card marks for sale invoices (`send_invoice_to_email`,
+ * `send_invoice_to_accounting_email`); when neither is marked, the first
+ * non-blank of `email` and `accounting_email`.
+ */
+async function clientCardEmailAddresses(
+  client: EFinancialsClient,
+  id: number,
+): Promise<AddressLookup & { clientsId?: number }> {
+  try {
+    const invoice = (await client.get(`/v1/sale_invoices/${id}`)) as {
+      clients_id?: unknown;
+    } | null;
+    const clientsId = invoice?.clients_id;
+    if (typeof clientsId !== "number" || !Number.isInteger(clientsId) || clientsId <= 0) {
+      return { kind: "none" };
+    }
+    const card = (await client.get(`/v1/clients/${clientsId}`)) as {
+      email?: unknown;
+      accounting_email?: unknown;
+      send_invoice_to_email?: unknown;
+      send_invoice_to_accounting_email?: unknown;
+    } | null;
+    const email = nonBlankString(card?.email);
+    const accountingEmail = nonBlankString(card?.accounting_email);
+    const marked: string[] = [];
+    if (card?.send_invoice_to_email === true && email !== undefined) marked.push(email);
+    if (
+      card?.send_invoice_to_accounting_email === true &&
+      accountingEmail !== undefined &&
+      accountingEmail !== email
+    ) {
+      marked.push(accountingEmail);
+    }
+    const addresses = marked.length > 0 ? marked.join(", ") : (email ?? accountingEmail);
+    return addresses === undefined
+      ? { kind: "none", clientsId }
+      : { kind: "found", addresses, clientsId };
+  } catch {
+    return { kind: "failed" };
+  }
+}
+
+function buyerEmailNotFoundError(id: number, clientsId?: number): string {
+  const card = clientsId === undefined ? "the buyer's client card" : `client ${clientsId}`;
+  return (
+    `Buyer's e-mail address not found for sales invoice ${id}: delivery options suggest no address ` +
+    `and ${card} has no email or accounting_email. Pass email_addresses, or add an e-mail to the client card.`
+  );
+}
+
+/**
+ * Default recipient(s) for deliver_sales_invoice with send_email and no
+ * email_addresses: delivery options first, then the buyer's client card.
+ * Returns undefined when a lookup failed, so the PATCH goes out unchanged and
+ * RIK reports its own error. Throws when both lookups succeeded and found nothing.
+ */
+async function defaultDeliveryEmailAddresses(
+  client: EFinancialsClient,
+  id: number,
+): Promise<string | undefined> {
+  const suggested = await suggestedDeliveryEmailAddresses(client, id);
+  if (suggested.kind === "found") return suggested.addresses;
+  const fromCard = await clientCardEmailAddresses(client, id);
+  if (fromCard.kind === "found") return fromCard.addresses;
+  if (suggested.kind === "failed" || fromCard.kind === "failed") return undefined;
+  throw new Error(buyerEmailNotFoundError(id, fromCard.clientsId));
 }
 
 async function salesInvoiceItemContext(
@@ -1426,7 +1503,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
 
     deliver_sales_invoice: {
       description:
-        "Send a sales invoice to the customer (PATCH .../deliver): e-invoice and/or email with optional subject and body. The API requires both send_einvoice and send_email; an omitted flag is sent as false, so set at least one to true. With send_email and no email_addresses, the client's suggested address from delivery options is used.",
+        "Send a sales invoice to the customer (PATCH .../deliver): e-invoice and/or email with optional subject and body. The API requires both send_einvoice and send_email; an omitted flag is sent as false, so set at least one to true. With send_email and no email_addresses, the client's suggested address from delivery options is used, falling back to the buyer's client card e-mail.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -1445,7 +1522,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
           email_addresses: {
             type: "string",
             description:
-              "Recipient email addresses. If omitted and send_email is true, the addresses suggested by get_sales_invoice_delivery_options (can_send_email_addresses) are used.",
+              "Recipient email addresses. If omitted and send_email is true, the addresses suggested by get_sales_invoice_delivery_options (can_send_email_addresses) are used; if none are suggested, the buyer's client card e-mail. Errors if neither has an address.",
           },
           email_subject: {
             type: "string",
@@ -1470,9 +1547,9 @@ export function createInvoiceTools(client: EFinancialsClient) {
           body.email_addresses = rest.email_addresses;
         } else if (body.send_email === true) {
           // Same default as the e-Financials UI: use the address(es) the API
-          // suggests for this invoice (client invoice/contact email).
-          const suggested = await suggestedDeliveryEmailAddresses(client, id);
-          if (suggested !== undefined) body.email_addresses = suggested;
+          // suggests for this invoice, else the buyer's client card email.
+          const defaults = await defaultDeliveryEmailAddresses(client, id);
+          if (defaults !== undefined) body.email_addresses = defaults;
         }
         if (rest.email_subject !== undefined) body.email_subject = rest.email_subject;
         if (rest.email_body !== undefined) body.email_body = rest.email_body;

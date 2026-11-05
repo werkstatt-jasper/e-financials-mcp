@@ -1157,28 +1157,213 @@ describe("invoice tools", () => {
     });
   });
 
+  /** Mocks GET by path: delivery options, the sale invoice, and the client card. */
+  function mockDeliveryLookups(responses: {
+    options?: unknown;
+    invoice?: unknown;
+    card?: unknown;
+    fail?: "options" | "invoice" | "card";
+  }) {
+    vi.mocked(client.get).mockImplementation((async (path: string) => {
+      if (path.endsWith("/delivery_options")) {
+        if (responses.fail === "options") throw new Error("409 Conflict");
+        return responses.options;
+      }
+      if (path.startsWith("/v1/sale_invoices/")) {
+        if (responses.fail === "invoice") throw new Error("404 Not Found");
+        return responses.invoice;
+      }
+      if (path.startsWith("/v1/clients/")) {
+        if (responses.fail === "card") throw new Error("500 Internal Server Error");
+        return responses.card;
+      }
+      throw new Error(`unexpected GET ${path}`);
+    }) as never);
+  }
+
+  const noSuggestion = {
+    can_send_einvoice: false,
+    can_send_email: true,
+    can_send_email_addresses: null,
+  };
+
   it.each([
-    ["missing", { can_send_einvoice: false, can_send_email: false }],
-    ["blank", { can_send_einvoice: false, can_send_email: false, can_send_email_addresses: "  " }],
-    [
-      "not a string",
-      { can_send_einvoice: false, can_send_email: false, can_send_email_addresses: 5 },
-    ],
-    ["null response", null],
-  ])("deliver_sales_invoice leaves email_addresses unset when the suggestion is %s", async (_label, options) => {
-    vi.mocked(client.get).mockResolvedValue(options as never);
+    ["null", noSuggestion],
+    ["missing", { can_send_einvoice: false, can_send_email: true }],
+    ["blank", { ...noSuggestion, can_send_email_addresses: "  " }],
+    ["not a string", { ...noSuggestion, can_send_email_addresses: 5 }],
+    ["a null response", null],
+  ])("deliver_sales_invoice falls back to the client card email when the suggestion is %s", async (_label, options) => {
+    mockDeliveryLookups({
+      options,
+      invoice: { id: 24, clients_id: 901 },
+      card: { id: 901, name: "Demo Buyer OÜ", email: " buyer@example.test " },
+    });
     vi.mocked(client.patch).mockResolvedValue({ response_code: 0 } as never);
 
     await tools.deliver_sales_invoice.handler({ id: 24, send_email: true });
 
+    expect(client.get).toHaveBeenCalledWith("/v1/sale_invoices/24/delivery_options");
+    expect(client.get).toHaveBeenCalledWith("/v1/sale_invoices/24");
+    expect(client.get).toHaveBeenCalledWith("/v1/clients/901");
     expect(client.patch).toHaveBeenCalledWith("/v1/sale_invoices/24/deliver", {
       send_einvoice: false,
       send_email: true,
+      email_addresses: "buyer@example.test",
     });
   });
 
-  it("deliver_sales_invoice keeps the RIK error when no address exists and the lookup fails", async () => {
-    vi.mocked(client.get).mockRejectedValue(new Error("409 Conflict"));
+  it("deliver_sales_invoice does not read the client card when delivery options suggest an address", async () => {
+    mockDeliveryLookups({
+      options: { ...noSuggestion, can_send_email_addresses: "a@example.test" },
+    });
+    vi.mocked(client.patch).mockResolvedValue({ response_code: 0 } as never);
+
+    await tools.deliver_sales_invoice.handler({ id: 26, send_email: true });
+
+    expect(client.get).toHaveBeenCalledTimes(1);
+    expect(client.patch).toHaveBeenCalledWith("/v1/sale_invoices/26/deliver", {
+      send_einvoice: false,
+      send_email: true,
+      email_addresses: "a@example.test",
+    });
+  });
+
+  it.each([
+    [
+      "the contact email when it is marked for invoices",
+      {
+        email: "contact@example.test",
+        accounting_email: "books@example.test",
+        send_invoice_to_email: true,
+      },
+      "contact@example.test",
+    ],
+    [
+      "the accounting email when only it is marked for invoices",
+      {
+        email: "contact@example.test",
+        accounting_email: "books@example.test",
+        send_invoice_to_email: false,
+        send_invoice_to_accounting_email: true,
+      },
+      "books@example.test",
+    ],
+    [
+      "both marked addresses, comma-separated",
+      {
+        email: "contact@example.test",
+        accounting_email: "books@example.test",
+        send_invoice_to_email: true,
+        send_invoice_to_accounting_email: true,
+      },
+      "contact@example.test, books@example.test",
+    ],
+    [
+      "one address when both marked fields are the same",
+      {
+        email: "same@example.test",
+        accounting_email: "same@example.test",
+        send_invoice_to_email: true,
+        send_invoice_to_accounting_email: true,
+      },
+      "same@example.test",
+    ],
+    [
+      "the contact email when nothing is marked",
+      { email: "contact@example.test", accounting_email: "books@example.test" },
+      "contact@example.test",
+    ],
+    [
+      "the accounting email when the contact email is blank",
+      { email: "", accounting_email: "books@example.test", send_invoice_to_email: true },
+      "books@example.test",
+    ],
+  ])("deliver_sales_invoice uses %s from the client card", async (_label, card, expected) => {
+    mockDeliveryLookups({
+      options: noSuggestion,
+      invoice: { id: 27, clients_id: 902 },
+      card: { id: 902, name: "Demo Buyer OÜ", ...card },
+    });
+    vi.mocked(client.patch).mockResolvedValue({ response_code: 0 } as never);
+
+    await tools.deliver_sales_invoice.handler({ id: 27, send_email: true });
+
+    expect(client.patch).toHaveBeenCalledWith("/v1/sale_invoices/27/deliver", {
+      send_einvoice: false,
+      send_email: true,
+      email_addresses: expected,
+    });
+  });
+
+  it("deliver_sales_invoice throws a clear error when neither delivery options nor the client card has an email", async () => {
+    mockDeliveryLookups({
+      options: noSuggestion,
+      invoice: { id: 28, clients_id: 903 },
+      card: { id: 903, name: "Demo Buyer OÜ", email: null, accounting_email: "  " },
+    });
+
+    await expect(tools.deliver_sales_invoice.handler({ id: 28, send_email: true })).rejects.toThrow(
+      "Buyer's e-mail address not found for sales invoice 28: delivery options suggest no address and client 903 has no email or accounting_email. Pass email_addresses, or add an e-mail to the client card.",
+    );
+    expect(client.patch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["has no clients_id", { id: 29 }],
+    ["is null", null],
+  ])("deliver_sales_invoice throws the clear error when the invoice %s", async (_label, invoice) => {
+    mockDeliveryLookups({ options: noSuggestion, invoice });
+
+    await expect(tools.deliver_sales_invoice.handler({ id: 29, send_email: true })).rejects.toThrow(
+      "Buyer's e-mail address not found for sales invoice 29: delivery options suggest no address and the buyer's client card has no email",
+    );
+    expect(client.get).not.toHaveBeenCalledWith(expect.stringMatching(/^\/v1\/clients\//));
+    expect(client.patch).not.toHaveBeenCalled();
+  });
+
+  it("deliver_sales_invoice throws the clear error when the client card is null", async () => {
+    mockDeliveryLookups({
+      options: noSuggestion,
+      invoice: { id: 30, clients_id: 904 },
+      card: null,
+    });
+
+    await expect(tools.deliver_sales_invoice.handler({ id: 30, send_email: true })).rejects.toThrow(
+      "client 904 has no email or accounting_email",
+    );
+    expect(client.patch).not.toHaveBeenCalled();
+  });
+
+  it("deliver_sales_invoice uses the client card when the delivery options lookup fails", async () => {
+    mockDeliveryLookups({
+      fail: "options",
+      invoice: { id: 31, clients_id: 905 },
+      card: { id: 905, email: "buyer@example.test" },
+    });
+    vi.mocked(client.patch).mockResolvedValue({ response_code: 0 } as never);
+
+    await tools.deliver_sales_invoice.handler({ id: 31, send_email: true });
+
+    expect(client.patch).toHaveBeenCalledWith("/v1/sale_invoices/31/deliver", {
+      send_einvoice: false,
+      send_email: true,
+      email_addresses: "buyer@example.test",
+    });
+  });
+
+  it.each([
+    [
+      "delivery options",
+      { fail: "options" as const, invoice: { id: 25, clients_id: 906 }, card: { id: 906 } },
+    ],
+    ["sale invoice", { fail: "invoice" as const, options: noSuggestion }],
+    [
+      "client card",
+      { fail: "card" as const, options: noSuggestion, invoice: { id: 25, clients_id: 906 } },
+    ],
+  ])("deliver_sales_invoice keeps the RIK error when no address is found and the %s lookup fails", async (_label, lookups) => {
+    mockDeliveryLookups(lookups);
     vi.mocked(client.patch).mockRejectedValue(new Error("Buyer's e-mail address not found"));
 
     await expect(tools.deliver_sales_invoice.handler({ id: 25, send_email: true })).rejects.toThrow(
