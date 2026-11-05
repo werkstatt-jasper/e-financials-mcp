@@ -231,6 +231,7 @@ Copy `.env.example` to `.env` and fill in your credentials. The server loads `.e
 | `RIK_HTTP_MAX_RETRIES` | No | Extra HTTP attempts for transient failures (network errors, 408, 429, 5xx). Default: `0`. |
 | `RIK_HTTP_RETRY_BASE_MS` | No | Base delay in ms for exponential backoff. Default: `500`. |
 | `RIK_REQUEST_TIMEOUT_MS` | No | Maximum time in ms per outbound request. Default: `30000`. |
+| `RIK_JOURNAL_LIST_MAX_PAGES` | No | Maximum `/v1/journals` list pages loaded by the ledger tools (trial balance, balance sheet, P&L, account balance, month-end close) before they stop with `journal_list_truncated`. Default: `1000`. |
 | `LOG_LEVEL` | No | Pino log level on **stderr**: `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`. Default: `info`. |
 
 ## MCP host configuration

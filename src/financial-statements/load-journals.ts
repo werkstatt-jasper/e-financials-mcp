@@ -1,10 +1,30 @@
 import type { EFinancialsClient } from "../client.js";
 import type { Journal } from "../types/journal.js";
 
-/** Match default EFinancialsClient maxPages; statements refuse silent truncation. */
-export const JOURNAL_LIST_MAX_PAGES = 100;
+/**
+ * Default cap on /v1/journals list pages for ledger loads (statements, balances,
+ * month-end). Was 100; large ledgers hit that with journal_list_truncated.
+ * Override with `RIK_JOURNAL_LIST_MAX_PAGES`.
+ */
+export const JOURNAL_LIST_MAX_PAGES = 1000;
+
+/** Concurrent page requests once page 1 has reported total_pages. */
+export const JOURNAL_LIST_PAGE_CONCURRENCY = 4;
 
 const HYDRATE_CONCURRENCY = 5;
+
+/**
+ * Reads `RIK_JOURNAL_LIST_MAX_PAGES`; unset, invalid or values below 1 use
+ * {@link JOURNAL_LIST_MAX_PAGES}.
+ */
+export function journalListMaxPagesFromEnv(): number {
+  const raw = process.env.RIK_JOURNAL_LIST_MAX_PAGES;
+  if (raw === undefined || raw.trim() === "") {
+    return JOURNAL_LIST_MAX_PAGES;
+  }
+  const n = Number(raw.trim());
+  return Number.isInteger(n) && n >= 1 ? n : JOURNAL_LIST_MAX_PAGES;
+}
 
 export class JournalListTruncatedError extends Error {
   readonly code = "journal_list_truncated";
@@ -18,39 +38,61 @@ export class JournalListTruncatedError extends Error {
   }
 }
 
+function truncatedMessage(totalPages: number, maxPages: number): string {
+  return `Journal list has ${totalPages} API pages, more than the limit of ${maxPages} (RIK_JOURNAL_LIST_MAX_PAGES). Narrow date_from/date_to or raise RIK_JOURNAL_LIST_MAX_PAGES and retry — financial statements refuse incomplete ledger loads.`;
+}
+
 function hasPostings(journal: Journal): boolean {
   return Array.isArray(journal.postings) && journal.postings.length > 0;
 }
 
 /**
- * Page through /v1/journals; throw if the client page cap would under-report.
+ * Page through /v1/journals. Page 1 is fetched first; once it reports
+ * total_pages, the remaining pages are fetched with bounded concurrency and
+ * concatenated in page order. If a later page reports a higher total_pages
+ * (the ledger grew mid-load), those pages are fetched too.
+ *
+ * Throws {@link JournalListTruncatedError} as soon as total_pages exceeds the
+ * cap (`maxPages`, default from `RIK_JOURNAL_LIST_MAX_PAGES`), so statements
+ * never silently under-report.
  */
 export async function fetchAllJournalListPages(
   client: EFinancialsClient,
   params?: { start_date?: string; end_date?: string },
+  options: { maxPages?: number } = {},
 ): Promise<Journal[]> {
-  const allItems: Journal[] = [];
-  let page = 1;
-  let hasMore = true;
+  const maxPages = Math.max(1, Math.floor(options.maxPages ?? journalListMaxPagesFromEnv()));
+  const pages: Journal[][] = [];
 
-  while (hasMore) {
+  const fetchPage = async (page: number): Promise<number> => {
     const response = await client.get<Journal>("/v1/journals", {
       ...params,
       page,
     });
-    if (response.items) {
-      allItems.push(...(response.items as Journal[]));
+    pages[page - 1] = (response.items as Journal[] | undefined) ?? [];
+    return response.total_pages || 1;
+  };
+
+  let totalPages = await fetchPage(1);
+  let fetched = 1;
+  while (fetched < totalPages) {
+    if (totalPages > maxPages) {
+      throw new JournalListTruncatedError(truncatedMessage(totalPages, maxPages));
     }
-    const currentPage = response.current_page || page;
-    const totalPages = response.total_pages || 1;
-    hasMore = currentPage < totalPages;
-    if (hasMore && page >= JOURNAL_LIST_MAX_PAGES) {
-      throw new JournalListTruncatedError();
+    const batch: number[] = [];
+    for (
+      let page = fetched + 1;
+      page <= totalPages && batch.length < JOURNAL_LIST_PAGE_CONCURRENCY;
+      page++
+    ) {
+      batch.push(page);
     }
-    page++;
+    const reported = await Promise.all(batch.map(fetchPage));
+    fetched += batch.length;
+    totalPages = Math.max(totalPages, ...reported);
   }
 
-  return allItems;
+  return pages.flat();
 }
 
 async function mapPool<T, R>(
@@ -78,7 +120,7 @@ async function mapPool<T, R>(
  */
 export async function loadJournalsWithPostings(
   client: EFinancialsClient,
-  options: { start_date?: string; end_date?: string } = {},
+  options: { start_date?: string; end_date?: string; maxPages?: number } = {},
 ): Promise<Journal[]> {
   const params: { start_date?: string; end_date?: string } = {};
   if (options.start_date != null) {
@@ -88,7 +130,7 @@ export async function loadJournalsWithPostings(
     params.end_date = options.end_date;
   }
 
-  const listed = await fetchAllJournalListPages(client, params);
+  const listed = await fetchAllJournalListPages(client, params, { maxPages: options.maxPages });
   const needHydrate = listed.filter((j) => j.id != null && !hasPostings(j));
   if (needHydrate.length === 0) {
     return listed;
