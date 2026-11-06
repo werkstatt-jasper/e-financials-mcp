@@ -1923,11 +1923,46 @@ describe("invoice tools", () => {
     expect(client.patch).toHaveBeenCalledWith("/v1/purchase_invoices/11", expect.any(Object));
   });
 
-  it("update_purchase_invoice description explains the CONFIRMED refusal", () => {
+  it("update_purchase_invoice description explains deletion, VAT rounding, and CONFIRMED refusal", () => {
     const description = tools.update_purchase_invoice.description;
     expect(description).toMatch(/^Update a purchase invoice draft \(PROJECT\)\./);
+    expect(description).toMatch(/delete_item_ids/);
+    expect(description).toMatch(/only the retained lines/);
+    expect(description).toMatch(/no DELETE item endpoint/);
+    expect(description).toMatch(/is_deleted is not a line field/);
+    expect(description).toMatch(
+      /Deletion does not change header gross_price or vat_price unless total_amount or vat_amount is passed/,
+    );
+    expect(description).toMatch(/Nonexistent delete_item_ids are rejected/);
+    expect(description).toMatch(/A repeated id is a single deletion/);
+    expect(description).toMatch(/Deleting every line sends items: \[\]/);
+    expect(description).toMatch(/The same id cannot be both patched and deleted/);
+    expect(description).toMatch(/base_document_files_id/);
+    expect(description).toMatch(
+      /upstream can compute VAT once from the invoice net rather than per line/,
+    );
+    expect(description).toMatch(
+      /do not zero or delete a rounding line unless the user explicitly asks/,
+    );
     expect(description).toMatch(/CONFIRMED invoices are refused before any PATCH/);
     expect(description).toMatch(/no unregister API/);
+    const deleteIds = tools.update_purchase_invoice.inputSchema.properties.delete_item_ids;
+    expect(deleteIds.type).toBe("array");
+    expect(deleteIds.description).toMatch(/omission/);
+    expect(deleteIds.description).toMatch(/Nonexistent ids are rejected/);
+    expect(deleteIds.description).toMatch(/repeated id is a single deletion/);
+    expect(deleteIds.description).toMatch(/Deleting every line sends items: \[\]/);
+    expect(deleteIds.description).toMatch(
+      /Header gross_price and vat_price stay as they are unless total_amount or vat_amount is passed/,
+    );
+    expect(deleteIds.description).toMatch(/invoice net rather than per line/);
+    expect(deleteIds.description).toMatch(/unless the user explicitly asks/);
+    expect(tools.update_purchase_invoice.inputSchema.properties.total_amount.description).toMatch(
+      /Deleting lines does not change it/,
+    );
+    expect(tools.update_purchase_invoice.inputSchema.properties.vat_amount.description).toMatch(
+      /Deleting lines does not change it/,
+    );
   });
 
   it("update_purchase_invoice applies reversed_vat_id to each existing item", async () => {
@@ -2129,6 +2164,9 @@ describe("invoice tools", () => {
   it("update_purchase_invoice inputSchema advertises items[] line fields", () => {
     const items = tools.update_purchase_invoice.inputSchema.properties.items;
     expect(items.description).toMatch(/cl_vat_articles_id/);
+    expect(items.description).toMatch(/is_deleted/);
+    expect(items.description).toMatch(/delete_item_ids/);
+    expect(items.items.additionalProperties).toBe(false);
     expect(items.items.properties).toMatchObject({
       id: { type: "number" },
       products_id: { type: "number" },
@@ -2222,6 +2260,370 @@ describe("invoice tools", () => {
         vat_price: 0,
       }),
     );
+    expect(vi.mocked(client.patch).mock.calls[0][1]).not.toHaveProperty("base_document_files_id");
+  });
+
+  function fakePurchaseDraft(
+    items: Array<Record<string, unknown>>,
+    header: Record<string, unknown> = {},
+  ) {
+    return {
+      ...invoicesFixture.purchase_get_for_patch,
+      client_name: "FAKE-SUPPLIER",
+      status: "PROJECT",
+      base_document_files_id: 900001,
+      items,
+      ...header,
+    };
+  }
+
+  const fakeKeepA = {
+    id: 501,
+    custom_title: "FAKE-KEEP-A",
+    amount: 1,
+    unit_net_price: 10,
+    total_net_price: 10,
+    vat_amount: 2.4,
+    project_no_vat_gross_price: 12.4,
+    purchase_accounts_id: 4000,
+    note_from_api: "FAKE-NOTE-A",
+  };
+  const fakeDrop = {
+    id: 502,
+    custom_title: "FAKE-DROP",
+    amount: 1,
+    unit_net_price: 3,
+    total_net_price: 3,
+    vat_amount: 0.72,
+    project_no_vat_gross_price: 3.72,
+    purchase_accounts_id: 4000,
+  };
+  const fakeKeepB = {
+    id: 503,
+    custom_title: "FAKE-KEEP-B",
+    amount: 4,
+    unit_net_price: 1,
+    total_net_price: 4,
+    vat_amount: 0.96,
+    project_no_vat_gross_price: 4.96,
+    purchase_accounts_id: 4000,
+    note_from_api: "FAKE-NOTE-B",
+  };
+
+  function mockPurchasePatch(current: Record<string, unknown>) {
+    vi.mocked(client.get).mockResolvedValueOnce(current as never);
+    vi.mocked(client.patch).mockResolvedValue({
+      ...invoicesFixture.patch_purchase_result,
+    } as never);
+  }
+
+  it("update_purchase_invoice deletes one PROJECT line by sending only retained lines", async () => {
+    const current = fakePurchaseDraft([fakeDrop, fakeKeepA, fakeKeepB]);
+    mockPurchasePatch(current);
+
+    await tools.update_purchase_invoice.handler({ id: 11, delete_item_ids: [502] });
+
+    const body = vi.mocked(client.patch).mock.calls[0][1] as {
+      items: Array<Record<string, unknown>>;
+      base_document_files_id: number;
+      gross_price: number;
+      vat_price: number;
+      client_name: string;
+    };
+    expect(client.patch).toHaveBeenCalledWith("/v1/purchase_invoices/11", expect.any(Object));
+    expect(body.items).toEqual([fakeKeepA, fakeKeepB]);
+    expect(body.items[0]).toBe(fakeKeepA);
+    expect(body.items[1]).toBe(fakeKeepB);
+    expect(body.base_document_files_id).toBe(900001);
+    expect(body.client_name).toBe("FAKE-SUPPLIER");
+    expect(body.gross_price).toBe(100);
+    expect(body.vat_price).toBe(0);
+    expect(body).not.toHaveProperty("is_deleted");
+    expect(JSON.stringify(body.items)).not.toContain("is_deleted");
+  });
+
+  it("update_purchase_invoice keeps a line that has no id when another line is deleted", async () => {
+    const orphan = { custom_title: "FAKE-ORPHAN", amount: 1, unit_net_price: 1 };
+    mockPurchasePatch(fakePurchaseDraft([orphan, fakeKeepA, fakeDrop]));
+
+    await tools.update_purchase_invoice.handler({ id: 11, delete_item_ids: [502] });
+
+    const body = vi.mocked(client.patch).mock.calls[0][1] as {
+      items: Array<Record<string, unknown>>;
+    };
+    expect(body.items).toEqual([orphan, fakeKeepA]);
+    expect(body.items[0]).toBe(orphan);
+  });
+
+  it("update_purchase_invoice patches a sibling and appends while deleting another line", async () => {
+    mockPurchasePatch(fakePurchaseDraft([fakeKeepA, fakeDrop, fakeKeepB]));
+
+    await tools.update_purchase_invoice.handler({
+      id: 11,
+      delete_item_ids: [502],
+      total_amount: 14.4,
+      vat_amount: 2.4,
+      items: [
+        { id: 501, custom_title: "FAKE-PATCHED" },
+        { custom_title: "FAKE-NEW", amount: 1, unit_net_price: 7, products_id: 880001 },
+      ],
+    });
+
+    const body = vi.mocked(client.patch).mock.calls[0][1] as {
+      items: Array<Record<string, unknown>>;
+      gross_price: number;
+      vat_price: number;
+      base_document_files_id: number;
+    };
+    expect(body.items.map((item) => item.id ?? item.custom_title)).toEqual([501, 503, "FAKE-NEW"]);
+    expect(body.items[0]).toMatchObject({
+      id: 501,
+      custom_title: "FAKE-PATCHED",
+      unit_net_price: 10,
+      vat_amount: 2.4,
+      note_from_api: "FAKE-NOTE-A",
+    });
+    expect(body.items[1]).toBe(fakeKeepB);
+    expect(body.items[2]).toMatchObject({
+      custom_title: "FAKE-NEW",
+      amount: 1,
+      unit_net_price: 7,
+      products_id: 880001,
+    });
+    expect(body.gross_price).toBe(14.4);
+    expect(body.vat_price).toBe(2.4);
+    expect(body.base_document_files_id).toBe(900001);
+  });
+
+  it("update_purchase_invoice applies reversed_vat_id only to lines that remain", async () => {
+    mockPurchasePatch(fakePurchaseDraft([fakeKeepA, fakeDrop]));
+
+    await tools.update_purchase_invoice.handler({
+      id: 11,
+      delete_item_ids: [502],
+      reversed_vat_id: 7,
+    });
+
+    const body = vi.mocked(client.patch).mock.calls[0][1] as {
+      items: Array<Record<string, unknown>>;
+    };
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]).toMatchObject({
+      id: 501,
+      custom_title: "FAKE-KEEP-A",
+      vat_amount: 2.4,
+      reversed_vat_id: 7,
+    });
+  });
+
+  it("update_purchase_invoice sends an empty items array when the only line is deleted", async () => {
+    mockPurchasePatch(fakePurchaseDraft([fakeDrop], { base_document_files_id: null }));
+
+    await tools.update_purchase_invoice.handler({ id: 11, delete_item_ids: [502] });
+
+    const body = vi.mocked(client.patch).mock.calls[0][1] as Record<string, unknown>;
+    expect(body.items).toEqual([]);
+    expect(body.base_document_files_id).toBeNull();
+    expect(body.clients_id).toBe(1);
+    expect(body.number).toBe("P11");
+  });
+
+  it("update_purchase_invoice sends no lines when every id is deleted", async () => {
+    mockPurchasePatch(fakePurchaseDraft([fakeKeepA, fakeDrop, fakeKeepB]));
+
+    await tools.update_purchase_invoice.handler({
+      id: 11,
+      delete_item_ids: [503, 501, 502],
+    });
+
+    const body = vi.mocked(client.patch).mock.calls[0][1] as {
+      items: unknown[];
+      base_document_files_id: number;
+      gross_price: number;
+      vat_price: number;
+    };
+    expect(body.items).toEqual([]);
+    expect(body.base_document_files_id).toBe(900001);
+    expect(body.gross_price).toBe(100);
+    expect(body.vat_price).toBe(0);
+  });
+
+  it("update_purchase_invoice treats a repeated delete id as one deletion and keeps header totals", async () => {
+    mockPurchasePatch(fakePurchaseDraft([fakeKeepA, fakeDrop]));
+
+    await tools.update_purchase_invoice.handler({ id: 11, delete_item_ids: [502, 502] });
+
+    const body = vi.mocked(client.patch).mock.calls[0][1] as {
+      items: Array<Record<string, unknown>>;
+      gross_price: number;
+      vat_price: number;
+    };
+    expect(body.items).toEqual([fakeKeepA]);
+    expect(body.items[0]).toBe(fakeKeepA);
+    expect(body.gross_price).toBe(100);
+    expect(body.vat_price).toBe(0);
+  });
+
+  it("update_purchase_invoice treats an empty delete_item_ids list as no deletion", async () => {
+    const current = fakePurchaseDraft([fakeKeepA, fakeDrop]);
+    mockPurchasePatch(current);
+
+    await tools.update_purchase_invoice.handler({ id: 11, delete_item_ids: [] });
+
+    const body = vi.mocked(client.patch).mock.calls[0][1] as { items: unknown };
+    expect(body.items).toBe(current.items);
+  });
+
+  it("update_purchase_invoice treats null delete_item_ids as omitted", async () => {
+    const originalItems = [{ id: 501, custom_title: "FAKE-KEEP-A" }];
+    vi.mocked(client.get).mockResolvedValueOnce({
+      ...invoicesFixture.purchase_get_for_patch,
+      items: originalItems,
+    } as never);
+    vi.mocked(client.patch).mockResolvedValue({ id: 11 } as never);
+
+    await tools.update_purchase_invoice.handler({ id: 11, delete_item_ids: null });
+
+    const body = vi.mocked(client.patch).mock.calls[0][1] as { items: unknown };
+    expect(body.items).toBe(originalItems);
+  });
+
+  it("update_purchase_invoice forwards base_document_files_id on a header-only update", async () => {
+    mockPurchasePatch(fakePurchaseDraft([fakeKeepA], { base_document_files_id: 900002 }));
+
+    await tools.update_purchase_invoice.handler({ id: 11, description: "FAKE-NOTE" });
+
+    expect(client.patch).toHaveBeenCalledWith(
+      "/v1/purchase_invoices/11",
+      expect.objectContaining({
+        notes: "FAKE-NOTE",
+        base_document_files_id: 900002,
+      }),
+    );
+    const body = vi.mocked(client.patch).mock.calls[0][1] as { items: unknown };
+    expect(body.items).toEqual([fakeKeepA]);
+  });
+
+  it("update_purchase_invoice rejects unknown delete ids before the PATCH", async () => {
+    vi.mocked(client.get).mockResolvedValueOnce(fakePurchaseDraft([fakeKeepA, fakeDrop]) as never);
+
+    await expect(
+      tools.update_purchase_invoice.handler({ id: 11, delete_item_ids: [999, 998] }),
+    ).rejects.toThrow("Unknown purchase invoice line id: 999, 998");
+    expect(client.get).toHaveBeenCalledWith("/v1/purchase_invoices/11");
+    expect(client.patch).not.toHaveBeenCalled();
+  });
+
+  it("update_purchase_invoice rejects a delete id when the draft has no items array", async () => {
+    const { items: _removed, ...withoutItems } = fakePurchaseDraft([]);
+    vi.mocked(client.get).mockResolvedValueOnce(withoutItems as never);
+
+    await expect(
+      tools.update_purchase_invoice.handler({ id: 11, delete_item_ids: [501] }),
+    ).rejects.toThrow("Unknown purchase invoice line id: 501");
+    expect(client.patch).not.toHaveBeenCalled();
+  });
+
+  it("update_purchase_invoice rejects patching and deleting the same line", async () => {
+    vi.mocked(client.get).mockResolvedValueOnce(fakePurchaseDraft([fakeKeepA, fakeDrop]) as never);
+
+    await expect(
+      tools.update_purchase_invoice.handler({
+        id: 11,
+        delete_item_ids: [502, 501],
+        items: [
+          { id: 501, amount: 9 },
+          { id: 502, custom_title: "FAKE-ALSO" },
+        ],
+      }),
+    ).rejects.toThrow(
+      "Cannot patch and delete the same purchase invoice line (501, 502). Omit that id from items[] and pass it in delete_item_ids.",
+    );
+    expect(client.patch).not.toHaveBeenCalled();
+  });
+
+  it("update_purchase_invoice rejects is_deleted on an item before any request", async () => {
+    await expect(
+      tools.update_purchase_invoice.handler({
+        id: 11,
+        items: [{ id: 501, is_deleted: true, mystery_flag: true }],
+      }),
+    ).rejects.toThrow(
+      /items\.0: Unrecognized item field\(s\): "is_deleted", "mystery_flag"\. Unknown item fields are rejected and are not applied\. is_deleted does not delete a line\. To delete a line, pass delete_item_ids/,
+    );
+    expect(client.get).not.toHaveBeenCalled();
+    expect(client.patch).not.toHaveBeenCalled();
+  });
+
+  it("update_purchase_invoice rejects other unknown item fields before any request", async () => {
+    await expect(
+      tools.update_purchase_invoice.handler({
+        id: 11,
+        items: [{ id: 501, custom_title: "FAKE-KEEP-A", mystery_flag: 1 }],
+      }),
+    ).rejects.toThrow(
+      /Unrecognized item field\(s\): "mystery_flag"\. Unknown item fields are rejected and are not applied\. To delete a line, pass delete_item_ids/,
+    );
+    expect(client.get).not.toHaveBeenCalled();
+    expect(client.patch).not.toHaveBeenCalled();
+  });
+
+  it("update_purchase_invoice rejects a non-object item before any request", async () => {
+    await expect(
+      tools.update_purchase_invoice.handler({
+        id: 11,
+        items: [null],
+      }),
+    ).rejects.toThrow(/items\.0/);
+    expect(client.get).not.toHaveBeenCalled();
+    expect(client.patch).not.toHaveBeenCalled();
+  });
+
+  it("update_purchase_invoice rejects a non-numeric item amount before any request", async () => {
+    await expect(
+      tools.update_purchase_invoice.handler({
+        id: 11,
+        items: [{ id: 501, amount: "nope" }],
+      }),
+    ).rejects.toThrow(/items\.0\.amount/);
+    expect(client.get).not.toHaveBeenCalled();
+    expect(client.patch).not.toHaveBeenCalled();
+  });
+
+  it("update_purchase_invoice rejects a non-positive delete_item_ids entry before any request", async () => {
+    await expect(
+      tools.update_purchase_invoice.handler({ id: 11, delete_item_ids: [0] }),
+    ).rejects.toThrow(/delete_item_ids/);
+    expect(client.get).not.toHaveBeenCalled();
+    expect(client.patch).not.toHaveBeenCalled();
+  });
+
+  it("update_purchase_invoice refuses CONFIRMED invoices when delete_item_ids is set", async () => {
+    vi.mocked(client.get).mockResolvedValueOnce({
+      ...fakePurchaseDraft([fakeKeepA, fakeDrop]),
+      status: "CONFIRMED",
+    } as never);
+
+    await expect(
+      tools.update_purchase_invoice.handler({ id: 11, delete_item_ids: [502] }),
+    ).rejects.toThrow(/Purchase invoice 11 is CONFIRMED[\s\S]*no unregister API/);
+    expect(client.patch).not.toHaveBeenCalled();
+  });
+
+  it("update_purchase_invoice prefers the CONFIRMED refusal over a patch-and-delete conflict", async () => {
+    vi.mocked(client.get).mockResolvedValueOnce({
+      ...fakePurchaseDraft([fakeKeepA]),
+      status: "CONFIRMED",
+    } as never);
+
+    await expect(
+      tools.update_purchase_invoice.handler({
+        id: 11,
+        delete_item_ids: [501],
+        items: [{ id: 501, amount: 2 }],
+      }),
+    ).rejects.toThrow(/no unregister API/);
+    expect(client.patch).not.toHaveBeenCalled();
   });
 
   it("delete_purchase_invoice calls DELETE and returns API JSON", async () => {

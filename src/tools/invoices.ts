@@ -2,7 +2,11 @@ import { z } from "zod";
 import type { EFinancialsClient } from "../client.js";
 import { assertCashAccountsDimensionWritable } from "../invoices/cash-accounts-dimension.js";
 import { createPurchaseInvoiceWithRepair } from "../invoices/create-purchase-invoice.js";
-import { mergePurchaseInvoiceItems } from "../invoices/merge-purchase-invoice-items.js";
+import {
+  assertPurchaseLineDeletesAreNotPatched,
+  mergePurchaseInvoiceItems,
+  omitPurchaseInvoiceItems,
+} from "../invoices/merge-purchase-invoice-items.js";
 import { withRegisterConflictHint } from "../invoices/register-conflict.js";
 import { registerPurchaseInvoiceWithRepair } from "../invoices/register-purchase-invoice.js";
 import {
@@ -205,15 +209,36 @@ const updateSalesInvoiceSchema = z.object({
   number_prefix: optionalNumberPrefix,
 });
 
-const updatePurchaseInvoiceItemSchema = purchaseInvoiceItemSchema.extend({
-  id: optionalPositiveInt,
-  products_id: optionalPositiveInt,
-  vat_accounts_dimensions_id: optionalPositiveInt,
-  cl_fringe_benefits_id: optionalPositiveInt,
-});
+const updatePurchaseInvoiceItemSchema = z.strictObject(
+  {
+    ...purchaseInvoiceItemSchema.shape,
+    id: optionalPositiveInt,
+    products_id: optionalPositiveInt,
+    vat_accounts_dimensions_id: optionalPositiveInt,
+    cl_fringe_benefits_id: optionalPositiveInt,
+  },
+  {
+    error: (issue) => {
+      if (issue.code !== "unrecognized_keys") return undefined;
+      const listed = issue.keys.map((key) => JSON.stringify(key)).join(", ");
+      const deletedHint = issue.keys.includes("is_deleted")
+        ? "is_deleted does not delete a line. "
+        : "";
+      return `Unrecognized item field(s): ${listed}. Unknown item fields are rejected and are not applied. ${deletedHint}To delete a line, pass delete_item_ids so the PATCH items array contains only the lines to keep.`;
+    },
+  },
+);
 
 function confirmedPurchaseInvoiceUpdateError(id: number): string {
   return `Purchase invoice ${id} is CONFIRMED. Confirmed purchase invoice lines can't be changed through the API. Take the invoice back to draft in the e-Financials UI, then retry update_purchase_invoice. There is no unregister API.`;
+}
+
+/** Keep the source-document link when the PATCH body is rebuilt from the GET. */
+function preservedPurchaseInvoiceDocumentLink(
+  current: Record<string, unknown>,
+): { base_document_files_id: unknown } | Record<string, never> {
+  if (!Object.hasOwn(current, "base_document_files_id")) return {};
+  return { base_document_files_id: current.base_document_files_id };
 }
 
 const updatePurchaseInvoiceSchema = z.object({
@@ -228,6 +253,10 @@ const updatePurchaseInvoiceSchema = z.object({
   description: optionalString,
   reversed_vat_id: optionalPositiveInt,
   items: z.array(updatePurchaseInvoiceItemSchema).optional(),
+  delete_item_ids: z
+    .array(positiveInt)
+    .nullish()
+    .transform((value) => value ?? undefined),
   paid_in_cash: optionalBoolean,
   cash_accounts_id: optionalPositiveInt,
   cash_accounts_dimensions_id: optionalPositiveInt,
@@ -1568,7 +1597,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
 
     update_purchase_invoice: {
       description:
-        "Update a purchase invoice draft (PROJECT). Merges header fields with the current GET. Optional items[] patches existing lines by id (or appends lines without id). purchase_accounts_id is API-derived from products_id / cl_purchase_articles_id — set those instead of writing the account id directly. CONFIRMED invoices are refused before any PATCH: confirmed purchase invoice lines can't be changed through the API. Take the invoice back to draft in the e-Financials UI first; there is no unregister API.",
+        "Update a purchase invoice draft (PROJECT). Merges header fields with the current GET. Optional items[] patches existing lines by id (or appends lines without id) and leaves every other line in place. Unknown item keys are rejected instead of being stripped. To delete lines, pass delete_item_ids: the PATCH items array then contains only the retained lines, which is how upstream removes a line (there is no DELETE item endpoint, and is_deleted is not a line field). Deletion does not change header gross_price or vat_price unless total_amount or vat_amount is passed. Nonexistent delete_item_ids are rejected. A repeated id is a single deletion. Deleting every line sends items: []. The same id cannot be both patched and deleted. Other lines keep their stored fields, and base_document_files_id is sent back when the current invoice has it. purchase_accounts_id is API-derived from products_id / cl_purchase_articles_id — set those instead of writing the account id directly. VAT rounding: upstream can compute VAT once from the invoice net rather than per line, so a small difference may appear as its own rounding line; do not zero or delete a rounding line unless the user explicitly asks. CONFIRMED invoices are refused before any PATCH: confirmed purchase invoice lines can't be changed through the API. Take the invoice back to draft in the e-Financials UI first; there is no unregister API.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -1584,8 +1613,16 @@ export function createInvoiceTools(client: EFinancialsClient) {
             type: "number",
             description: "Payment term in days (0 = immediate)",
           },
-          total_amount: { type: "number" },
-          vat_amount: { type: "number" },
+          total_amount: {
+            type: "number",
+            description:
+              "Header gross total (gross_price). Deleting lines does not change it; pass this when the header total should change.",
+          },
+          vat_amount: {
+            type: "number",
+            description:
+              "Header VAT (vat_price). Deleting lines does not change it; pass this when the header VAT should change. Upstream can compute VAT once from the invoice net rather than per line.",
+          },
           description: { type: "string" },
           reversed_vat_id: {
             type: "number",
@@ -1595,9 +1632,10 @@ export function createInvoiceTools(client: EFinancialsClient) {
           items: {
             type: "array",
             description:
-              "Partial line patches. Include id to update an existing line (other lines unchanged). Omit id to append a new line. Unknown ids are rejected. Writable fields include products_id, custom_title, amount, unit_net_price, purchase_accounts_dimensions_id, vat_accounts_id, vat_accounts_dimensions_id, cl_purchase_articles_id, cl_vat_articles_id (e.g. 16 = sõiduauto 100%), cl_fringe_benefits_id. purchase_accounts_id is read-only on the API.",
+              "Partial line patches. Include id to update an existing line (other lines stay; this does not delete them). Omit id to append a new line. Unknown ids and unknown item keys are rejected, including is_deleted, which does not delete a line. To delete lines, pass delete_item_ids. Writable fields include products_id, custom_title, amount, unit_net_price, purchase_accounts_dimensions_id, vat_accounts_id, vat_accounts_dimensions_id, cl_purchase_articles_id, cl_vat_articles_id (e.g. 16 = sõiduauto 100%), cl_fringe_benefits_id. purchase_accounts_id is read-only on the API.",
             items: {
               type: "object",
+              additionalProperties: false,
               properties: {
                 id: {
                   type: "number",
@@ -1625,6 +1663,15 @@ export function createInvoiceTools(client: EFinancialsClient) {
                 cl_fringe_benefits_id: { type: "number" },
                 reversed_vat_id: { type: "number" },
               },
+            },
+          },
+          delete_item_ids: {
+            type: "array",
+            description:
+              "Existing line ids to remove from this PROJECT draft. The PATCH items array contains only the retained lines; upstream deletes a line by omission and documents no DELETE item endpoint. Nonexistent ids are rejected. A repeated id is a single deletion. Deleting every line sends items: []. The same id cannot be patched and deleted. Header gross_price and vat_price stay as they are unless total_amount or vat_amount is passed. Do not zero or delete a rounding line unless the user explicitly asks: upstream can compute VAT once from the invoice net rather than per line.",
+            items: {
+              type: "number",
+              description: "Existing line id from get_purchase_invoice",
             },
           },
           paid_in_cash: {
@@ -1666,10 +1713,20 @@ export function createInvoiceTools(client: EFinancialsClient) {
           current: current.cash_accounts_dimensions_id,
         });
 
-        const currentItems = (current.items as Array<Record<string, unknown>> | undefined) ?? [];
+        const currentItems = Array.isArray(current.items)
+          ? (current.items as Array<Record<string, unknown>>)
+          : [];
         let items: Array<Record<string, unknown>> | unknown = current.items;
-        if (updateParams.items !== undefined) {
-          items = mergePurchaseInvoiceItems(currentItems, updateParams.items);
+        const deleteIds = updateParams.delete_item_ids ?? [];
+        // items[] stays a merge/append. delete_item_ids opts into omission,
+        // which is the upstream way to remove a line from a draft.
+        if (updateParams.items !== undefined || deleteIds.length > 0) {
+          assertPurchaseLineDeletesAreNotPatched(updateParams.items ?? [], deleteIds);
+          const merged =
+            updateParams.items !== undefined
+              ? mergePurchaseInvoiceItems(currentItems, updateParams.items)
+              : currentItems;
+          items = deleteIds.length > 0 ? omitPurchaseInvoiceItems(merged, deleteIds) : merged;
         }
 
         if (updateParams.reversed_vat_id !== undefined) {
@@ -1698,6 +1755,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
           paid_in_cash: updateParams.paid_in_cash ?? current.paid_in_cash,
           cash_accounts_id: updateParams.cash_accounts_id ?? current.cash_accounts_id,
           cash_payment_date: updateParams.cash_payment_date ?? current.cash_payment_date,
+          ...preservedPurchaseInvoiceDocumentLink(current),
         };
 
         const response = await client.patch<PurchaseInvoice>(
