@@ -1597,7 +1597,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
 
     update_purchase_invoice: {
       description:
-        "Update a purchase invoice draft (PROJECT). Merges header fields with the current GET. Optional items[] patches existing lines by id (or appends lines without id) and leaves every other line in place. Unknown item keys are rejected instead of being stripped. To delete lines, pass delete_item_ids: the PATCH items array then contains only the retained lines, which is how upstream removes a line (there is no DELETE item endpoint, and is_deleted is not a line field). Deletion does not change header gross_price or vat_price unless total_amount or vat_amount is passed. Other lines keep their stored fields, and base_document_files_id is sent back when the current invoice has it. purchase_accounts_id is API-derived from products_id / cl_purchase_articles_id — set those instead of writing the account id directly. VAT rounding: upstream can compute VAT once from the invoice net rather than per line, so a small difference may appear as its own rounding line; do not zero or delete a rounding line unless the user explicitly asks. CONFIRMED invoices are refused before any PATCH: confirmed purchase invoice lines can't be changed through the API. Take the invoice back to draft in the e-Financials UI first; there is no unregister API.",
+        "Update a purchase invoice draft (PROJECT). Merges header fields with the current GET. Optional items[] patches existing lines by id (or appends lines without id) and leaves every other line in place. Unknown item keys are rejected instead of being stripped. To delete lines, pass delete_item_ids: the PATCH items array then contains only the retained lines, which is how upstream removes a line (there is no DELETE item endpoint, and is_deleted is not a line field). Deletion does not change header gross_price or vat_price unless total_amount or vat_amount is passed. Nonexistent delete_item_ids are rejected. A repeated id is a single deletion. Deleting every line sends items: []. The same id cannot be both patched and deleted. Other lines keep their stored fields, and base_document_files_id is sent back when the current invoice has it. purchase_accounts_id is API-derived from products_id / cl_purchase_articles_id — set those instead of writing the account id directly. VAT rounding: upstream can compute VAT once from the invoice net rather than per line, so a small difference may appear as its own rounding line; do not zero or delete a rounding line unless the user explicitly asks. CONFIRMED invoices are refused before any PATCH: confirmed purchase invoice lines can't be changed through the API. Take the invoice back to draft in the e-Financials UI first; there is no unregister API.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -1613,8 +1613,16 @@ export function createInvoiceTools(client: EFinancialsClient) {
             type: "number",
             description: "Payment term in days (0 = immediate)",
           },
-          total_amount: { type: "number" },
-          vat_amount: { type: "number" },
+          total_amount: {
+            type: "number",
+            description:
+              "Header gross total (gross_price). Deleting lines does not change it; pass this when the header total should change.",
+          },
+          vat_amount: {
+            type: "number",
+            description:
+              "Header VAT (vat_price). Deleting lines does not change it; pass this when the header VAT should change. Upstream can compute VAT once from the invoice net rather than per line.",
+          },
           description: { type: "string" },
           reversed_vat_id: {
             type: "number",
@@ -1660,7 +1668,7 @@ export function createInvoiceTools(client: EFinancialsClient) {
           delete_item_ids: {
             type: "array",
             description:
-              "Existing line ids to remove from this PROJECT draft. The PATCH items array contains only the retained lines; upstream deletes a line by omission and documents no DELETE item endpoint. Unknown ids are rejected. Header gross_price and vat_price stay as they are unless total_amount or vat_amount is passed. Do not zero or delete a rounding line unless the user explicitly asks: upstream can compute VAT once from the invoice net rather than per line.",
+              "Existing line ids to remove from this PROJECT draft. The PATCH items array contains only the retained lines; upstream deletes a line by omission and documents no DELETE item endpoint. Nonexistent ids are rejected. A repeated id is a single deletion. Deleting every line sends items: []. The same id cannot be patched and deleted. Header gross_price and vat_price stay as they are unless total_amount or vat_amount is passed. Do not zero or delete a rounding line unless the user explicitly asks: upstream can compute VAT once from the invoice net rather than per line.",
             items: {
               type: "number",
               description: "Existing line id from get_purchase_invoice",

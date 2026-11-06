@@ -1930,6 +1930,13 @@ describe("invoice tools", () => {
     expect(description).toMatch(/only the retained lines/);
     expect(description).toMatch(/no DELETE item endpoint/);
     expect(description).toMatch(/is_deleted is not a line field/);
+    expect(description).toMatch(
+      /Deletion does not change header gross_price or vat_price unless total_amount or vat_amount is passed/,
+    );
+    expect(description).toMatch(/Nonexistent delete_item_ids are rejected/);
+    expect(description).toMatch(/A repeated id is a single deletion/);
+    expect(description).toMatch(/Deleting every line sends items: \[\]/);
+    expect(description).toMatch(/The same id cannot be both patched and deleted/);
     expect(description).toMatch(/base_document_files_id/);
     expect(description).toMatch(
       /upstream can compute VAT once from the invoice net rather than per line/,
@@ -1942,8 +1949,20 @@ describe("invoice tools", () => {
     const deleteIds = tools.update_purchase_invoice.inputSchema.properties.delete_item_ids;
     expect(deleteIds.type).toBe("array");
     expect(deleteIds.description).toMatch(/omission/);
+    expect(deleteIds.description).toMatch(/Nonexistent ids are rejected/);
+    expect(deleteIds.description).toMatch(/repeated id is a single deletion/);
+    expect(deleteIds.description).toMatch(/Deleting every line sends items: \[\]/);
+    expect(deleteIds.description).toMatch(
+      /Header gross_price and vat_price stay as they are unless total_amount or vat_amount is passed/,
+    );
     expect(deleteIds.description).toMatch(/invoice net rather than per line/);
     expect(deleteIds.description).toMatch(/unless the user explicitly asks/);
+    expect(tools.update_purchase_invoice.inputSchema.properties.total_amount.description).toMatch(
+      /Deleting lines does not change it/,
+    );
+    expect(tools.update_purchase_invoice.inputSchema.properties.vat_amount.description).toMatch(
+      /Deleting lines does not change it/,
+    );
   });
 
   it("update_purchase_invoice applies reversed_vat_id to each existing item", async () => {
@@ -2327,7 +2346,7 @@ describe("invoice tools", () => {
     const orphan = { custom_title: "FAKE-ORPHAN", amount: 1, unit_net_price: 1 };
     mockPurchasePatch(fakePurchaseDraft([orphan, fakeKeepA, fakeDrop]));
 
-    await tools.update_purchase_invoice.handler({ id: 11, delete_item_ids: [502, 502] });
+    await tools.update_purchase_invoice.handler({ id: 11, delete_item_ids: [502] });
 
     const body = vi.mocked(client.patch).mock.calls[0][1] as {
       items: Array<Record<string, unknown>>;
@@ -2420,9 +2439,29 @@ describe("invoice tools", () => {
     const body = vi.mocked(client.patch).mock.calls[0][1] as {
       items: unknown[];
       base_document_files_id: number;
+      gross_price: number;
+      vat_price: number;
     };
     expect(body.items).toEqual([]);
     expect(body.base_document_files_id).toBe(900001);
+    expect(body.gross_price).toBe(100);
+    expect(body.vat_price).toBe(0);
+  });
+
+  it("update_purchase_invoice treats a repeated delete id as one deletion and keeps header totals", async () => {
+    mockPurchasePatch(fakePurchaseDraft([fakeKeepA, fakeDrop]));
+
+    await tools.update_purchase_invoice.handler({ id: 11, delete_item_ids: [502, 502] });
+
+    const body = vi.mocked(client.patch).mock.calls[0][1] as {
+      items: Array<Record<string, unknown>>;
+      gross_price: number;
+      vat_price: number;
+    };
+    expect(body.items).toEqual([fakeKeepA]);
+    expect(body.items[0]).toBe(fakeKeepA);
+    expect(body.gross_price).toBe(100);
+    expect(body.vat_price).toBe(0);
   });
 
   it("update_purchase_invoice treats an empty delete_item_ids list as no deletion", async () => {
