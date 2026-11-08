@@ -61,6 +61,13 @@ export interface PurchaseInvoice {
   payment_status: "NOT_PAID" | "PARTIALLY_PAID" | "PAID" | null;
   /** Related transaction ids; only on a single-invoice GET. */
   transactions?: number[] | null;
+  /**
+   * Related settlement ids; only on a single-invoice GET.
+   * OpenAPI does not include settlement amounts.
+   */
+  settlements?: number[] | null;
+  paid_in_cash?: boolean | null;
+  bank_ref_number?: string | null;
   // Legacy aliases (not returned by the live API)
   invoice_no?: string;
   supplier_name?: string;

@@ -2,6 +2,19 @@ import { z } from "zod";
 import { createVerifiedTransaction } from "../banking/create-verified-transaction.js";
 import { errorMessage } from "../banking/errors.js";
 import {
+  confirmedPaymentLink,
+  currencyCode,
+  type DuplicateMatch,
+  duplicatePaymentMessage,
+  matchSupplierDraft,
+  type PaymentAccount,
+  type PaymentBankAccount,
+  paymentDimensionError,
+  type RelatedPayment,
+  roundedPaymentAmount,
+  unpaidRemainder,
+} from "../banking/purchase-payment.js";
+import {
   getIncomingPage,
   labelFetchedRows,
   loadLabelledTransactions,
@@ -21,6 +34,7 @@ import {
 import type { EFinancialsClient } from "../client.js";
 import { roundMoney } from "../money.js";
 import { resolveFileInput } from "../resolve-file-input.js";
+import type { AccountDimension } from "../types/accounts.js";
 import type { PurchaseInvoice } from "../types/invoice.js";
 import type { ApiFile } from "../types/journal.js";
 import type {
@@ -83,40 +97,86 @@ const payPurchaseInvoiceSchema = z.object({
   allow_duplicate: optionalBoolean,
 });
 
-function samePaymentAmount(value: unknown, amount: number): boolean {
-  return typeof value === "number" && roundMoney(value) === roundMoney(amount);
-}
-
-/** Supplier drafts with this amount, and this invoice's confirmed payments of this amount on this date. */
+/** Outgoing supplier drafts and confirmed payments linked to this invoice. */
 async function findPossibleDuplicatePayments(
   client: EFinancialsClient,
   invoice: PurchaseInvoice,
   amount: number,
+  currency: string,
   date: string,
-): Promise<Transaction[]> {
-  const drafts = (
-    await client.getAllPages<Transaction>("/v1/transactions", {
-      status: "PROJECT",
-      clients_id: invoice.clients_id,
-    })
-  ).filter(
-    (tx) =>
-      tx.status === "PROJECT" &&
-      tx.clients_id === invoice.clients_id &&
-      samePaymentAmount(tx.amount, amount),
-  );
-  const confirmed: Transaction[] = [];
-  for (const id of Array.isArray(invoice.transactions) ? invoice.transactions : []) {
-    const tx = (await client.get(`/v1/transactions/${id}`)) as Transaction;
-    if (
-      tx.status === "CONFIRMED" &&
-      String(tx.date).slice(0, 10) === date &&
-      samePaymentAmount(tx.amount, amount)
-    ) {
-      confirmed.push(tx);
+): Promise<DuplicateMatch[]> {
+  const drafts = await client.getAllPages<Transaction>("/v1/transactions", {
+    status: "PROJECT",
+    clients_id: invoice.clients_id,
+  });
+  const labelled = await labelFetchedRows(client, drafts, {
+    status: "PROJECT",
+    clients_id: invoice.clients_id,
+  });
+  const matches: DuplicateMatch[] = [];
+  for (const tx of labelled) {
+    const match = matchSupplierDraft(tx, {
+      supplierId: invoice.clients_id,
+      amount,
+      currency,
+      date,
+      invoice,
+    });
+    if (match) {
+      matches.push(match);
     }
   }
-  return [...drafts, ...confirmed];
+  const ids = Array.isArray(invoice.transactions) ? invoice.transactions : [];
+  for (const id of ids) {
+    const tx = (await client.get(`/v1/transactions/${id}`)) as Transaction & { items?: unknown };
+    const link = confirmedPaymentLink(tx, { amount, currency, date, invoice });
+    if (!link) {
+      continue;
+    }
+    const direction = await storedDirection(client, id, tx.date);
+    if (direction !== "outgoing") {
+      continue;
+    }
+    matches.push({
+      id,
+      status: tx.status,
+      date,
+      amount,
+      kind: "outgoing_invoice_payment",
+      link,
+    });
+  }
+  return matches;
+}
+
+async function readUnpaidRemainder(
+  client: EFinancialsClient,
+  invoice: PurchaseInvoice,
+  currency: string,
+): Promise<ReturnType<typeof unpaidRemainder>> {
+  const related: RelatedPayment[] = [];
+  if (Array.isArray(invoice.transactions)) {
+    for (const id of invoice.transactions) {
+      const tx = (await client.get(`/v1/transactions/${id}`)) as Transaction & { items?: unknown };
+      const direction = await storedDirection(client, id, tx.date);
+      related.push({
+        id,
+        status: tx.status,
+        is_deleted: tx.is_deleted,
+        direction,
+        items: tx.items,
+      });
+    }
+  }
+  return unpaidRemainder({
+    invoiceId: invoice.id,
+    gross: invoice.gross_price,
+    currency,
+    settlements: invoice.settlements,
+    paidInCash: invoice.paid_in_cash,
+    transactionIds: invoice.transactions,
+    related,
+  });
 }
 
 const createTransactionSchema = z.object({
@@ -485,7 +545,7 @@ export function createTransactionTools(client: EFinancialsClient) {
 
     pay_purchase_invoice: {
       description:
-        'Mark a CONFIRMED purchase invoice paid from a cash or bank dimension (for example account 1360, Arveldused aruandvate isikutega). Creates an outgoing transaction (type D, money out) and registers it against the invoice, which is the API form of the e-arveldaja posting "Ostuarve nr … tasumine". registered: true means the payment is registered; do not call again if the invoice could not be re-read. Amount defaults to the invoice gross price when the invoice is unpaid, and must not exceed that gross price. The API does not report the unpaid remainder, so a second partial payment can still exceed what remains. A PARTIALLY_PAID invoice requires amount. A non-EUR invoice sends currency_rate and a base_amount scaled from base_gross_price; pass currency_rate when the invoice has none. Refuses before any write when the supplier already has a PROJECT draft with the same amount, or the invoice already has a CONFIRMED payment with the same amount and date; pass allow_duplicate=true to pay anyway. When the stored direction cannot be confirmed as outgoing, the draft is kept but not registered (registered: false with its transaction_id). If registration fails, the draft is deleted.',
+        'Mark a CONFIRMED purchase invoice paid from a cash or bank dimension (for example account 1360, Arveldused aruandvate isikutega). Creates an outgoing transaction (type D, money out) and registers it against the invoice, which is the API form of the e-arveldaja posting "Ostuarve nr … tasumine". registered: true means the payment is registered; do not call again if the invoice could not be re-read. The posted amount is rounded to a fixed 2 decimal places for every currency, the same rounding as base_amount, not each currency\'s minor unit. Amount defaults to the invoice gross price when the invoice is unpaid, and must not exceed that gross price. A blank invoice currency is refused. A PARTIALLY_PAID invoice requires amount and is posted only when the unpaid remainder can be read from confirmed outgoing distributions in the invoice currency; the amount must not exceed that remainder. The payment is refused when the remainder is not known (settlements without amounts, paid_in_cash, or an unexplained related transaction). The dimension currency must match the invoice, and its chart account must be selectable for outgoing payments. A bank-account accounts_dimensions_id does not authorize the payment by itself; a row that points at this dimension without account_name_est and account_no, or more than one such row, is refused. A non-EUR invoice sends currency_rate and a base_amount scaled from base_gross_price using the rounded amount; pass currency_rate when the invoice has none. Refuses before any write when an outgoing PROJECT draft for this supplier, on this date, with this amount and currency, is linked to this invoice, or the invoice already has an outgoing CONFIRMED payment with this amount, currency, and date. The error names each matching transaction and why it matched. Pass allow_duplicate=true to pay anyway. When the stored direction cannot be confirmed as outgoing, the draft is kept but not registered (registered: false with its transaction_id). If registration fails, the draft is deleted.',
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -496,7 +556,7 @@ export function createTransactionTools(client: EFinancialsClient) {
           accounts_dimensions_id: {
             type: "number",
             description:
-              "Cash or bank dimension the payment leaves from (account 1360's dimension, or a bank dimension)",
+              "Dimension in the invoice currency whose chart account is selectable for outgoing payments. A bank-account accounts_dimensions_id does not authorize the payment by itself.",
           },
           date: {
             type: "string",
@@ -505,7 +565,7 @@ export function createTransactionTools(client: EFinancialsClient) {
           amount: {
             type: "number",
             description:
-              "Amount to pay. Defaults to the invoice gross price when the invoice is not partly paid. Required when payment_status is PARTIALLY_PAID.",
+              "Amount to pay in the invoice currency. Rounded to a fixed 2 decimal places for every currency before posting (not the currency's own minor unit). Defaults to the invoice gross price when the invoice is not partly paid. Required when payment_status is PARTIALLY_PAID, and then cannot exceed the readable unpaid remainder.",
           },
           description: {
             type: "string",
@@ -520,7 +580,7 @@ export function createTransactionTools(client: EFinancialsClient) {
           allow_duplicate: {
             type: "boolean",
             description:
-              "Pay even when a matching supplier draft or same-day payment of this invoice already exists.",
+              "Pay even when an outgoing same-day draft or confirmed payment linked to this invoice already matches this amount and currency.",
           },
         },
         required: ["purchase_invoices_id", "accounts_dimensions_id", "date"],
@@ -548,27 +608,69 @@ export function createTransactionTools(client: EFinancialsClient) {
         if (args.amount !== undefined && !(args.amount > 0)) {
           throw new Error("amount must be greater than 0.");
         }
-        const amount = args.amount ?? invoice.gross_price;
-        if (amount == null || !(amount > 0)) {
+        const rawAmount = args.amount ?? invoice.gross_price;
+        if (rawAmount == null || !(rawAmount > 0)) {
           throw new Error(
             "amount is required when the purchase invoice has no positive gross price.",
           );
         }
-        if (
-          invoice.gross_price != null &&
-          invoice.gross_price > 0 &&
-          amount > invoice.gross_price
-        ) {
-          throw new Error(
-            `amount is greater than the invoice gross price (${invoice.gross_price}). The API does not report the unpaid remainder of a partly paid invoice.`,
-          );
+        const amount = roundedPaymentAmount(rawAmount);
+        if (!(amount > 0)) {
+          throw new Error("amount must be greater than 0 after rounding to 2 decimal places.");
+        }
+        if (invoice.gross_price != null && invoice.gross_price > 0) {
+          const gross = roundedPaymentAmount(invoice.gross_price);
+          if (amount > gross) {
+            throw new Error(`amount is greater than the invoice gross price (${gross}).`);
+          }
         }
         if (!invoice.clients_id) {
           throw new Error(`Purchase invoice ${args.purchase_invoices_id} has no supplier.`);
         }
+        const currency = currencyCode(invoice.cl_currencies_id);
+        if (!currency) {
+          throw new Error(
+            `Purchase invoice ${args.purchase_invoices_id} has no currency, so the payment was not posted.`,
+          );
+        }
+        let rate: number | undefined;
+        if (currency !== "EUR") {
+          const invoiceRate = (invoice as { currency_rate?: number | null }).currency_rate;
+          rate = args.currency_rate ?? (typeof invoiceRate === "number" ? invoiceRate : undefined);
+          if (rate == null || !(rate > 0)) {
+            throw new Error("currency_rate is required when the purchase invoice is not in EUR.");
+          }
+        }
+        if (paymentStatus === "PARTIALLY_PAID") {
+          const remainder = await readUnpaidRemainder(client, invoice, currency);
+          if (!remainder.ok) {
+            throw new Error(
+              `Purchase invoice ${args.purchase_invoices_id} is PARTIALLY_PAID and its unpaid remainder cannot be determined: ${remainder.reason}`,
+            );
+          }
+          if (amount > remainder.remaining) {
+            throw new Error(
+              `amount ${amount} is greater than the unpaid remainder ${remainder.remaining} of purchase invoice ${args.purchase_invoices_id}.`,
+            );
+          }
+        }
+        const [dimensions, accounts, bankAccounts] = await Promise.all([
+          client.getAllPages<AccountDimension>("/v1/account_dimensions"),
+          client.getAllPages<PaymentAccount>("/v1/accounts"),
+          client.getAllPages<PaymentBankAccount>("/v1/bank_accounts"),
+        ]);
+        const dimensionError = paymentDimensionError({
+          dimensionId: args.accounts_dimensions_id,
+          invoiceCurrency: currency,
+          dimensions,
+          accounts,
+          bankAccounts,
+        });
+        if (dimensionError) {
+          throw new Error(dimensionError);
+        }
         const number = invoice.number || invoice.invoice_no || String(args.purchase_invoices_id);
         const description = (args.description ?? `Ostuarve nr ${number} tasumine`).slice(0, 150);
-        const currency = invoice.cl_currencies_id || "EUR";
         const payment: Record<string, string | number> = {
           accounts_dimensions_id: args.accounts_dimensions_id,
           type: "D",
@@ -578,13 +680,7 @@ export function createTransactionTools(client: EFinancialsClient) {
           clients_id: invoice.clients_id,
           description,
         };
-        if (currency !== "EUR") {
-          const invoiceRate = (invoice as { currency_rate?: number | null }).currency_rate;
-          const rate =
-            args.currency_rate ?? (typeof invoiceRate === "number" ? invoiceRate : undefined);
-          if (rate == null || !(rate > 0)) {
-            throw new Error("currency_rate is required when the purchase invoice is not in EUR.");
-          }
+        if (rate != null) {
           payment.currency_rate = rate;
           const gross = invoice.gross_price;
           const baseGross = invoice.base_gross_price;
@@ -598,15 +694,11 @@ export function createTransactionTools(client: EFinancialsClient) {
             client,
             invoice,
             amount,
+            currency,
             args.date,
           );
           if (duplicates.length > 0) {
-            const list = duplicates
-              .map((tx) => `${tx.id} (${tx.status}, ${tx.date}, ${tx.amount})`)
-              .join(", ");
-            throw new Error(
-              `Possible duplicate payment for purchase invoice ${args.purchase_invoices_id}: transaction ${list}. Register an existing draft with register_transaction, delete it with delete_transaction, or pass allow_duplicate=true to create another payment.`,
-            );
+            throw new Error(duplicatePaymentMessage(args.purchase_invoices_id, duplicates));
           }
         }
         const created = await createVerifiedTransaction(client, {
