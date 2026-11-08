@@ -320,7 +320,7 @@ RIK's GET returns `type: "C"` for every transaction, whichever direction it was 
 | `get_unprocessed_transactions` | `PROJECT` transactions with no client. |
 | `update_transaction` | PATCH draft metadata (`clients_id`, `accounts_id`, `description`) and optional direction (`type`), which is checked against the stored direction. Unknown direction leaves the update in place with `direction_confirmed` false. Not distribution rows. |
 | `create_transaction` | POST new draft (`PROJECT`). `C` is money in and `D` is money out; the RIK letter is translated and the stored direction is checked. Unknown direction keeps the draft with `direction_confirmed` false. |
-| `pay_purchase_invoice` | Pay a CONFIRMED purchase invoice from a cash or bank dimension (outgoing type `D`) and register it. Refuses a likely duplicate unless `allow_duplicate`; an unconfirmed save is kept as an unregistered draft. |
+| `pay_purchase_invoice` | Pay a CONFIRMED purchase invoice from a cash or bank dimension in the invoice currency (outgoing type `D`) and register it. Amounts are rounded to 2 decimal places. A partly paid invoice is capped at the readable unpaid remainder, or refused when that remainder is not in the API. Refuses an outgoing same-day duplicate linked to the invoice unless `allow_duplicate`; an unconfirmed save is kept as an unregistered draft. |
 | `delete_transaction` | DELETE transaction. |
 | `register_transaction` | Confirm with full `distributions[]` (`accounts` / `purchase_invoices` / `sale_invoices`). UI equivalent of Add a row + Save and confirm. |
 | `invalidate_transaction` | Reverse registration. |
