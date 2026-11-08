@@ -926,6 +926,7 @@ describe("transaction tools", () => {
         payment_status: "NOT_PAID",
         gross_price: 37.2,
         clients_id: 19,
+        cl_currencies_id: "EUR",
         invoice_no: "F-9",
       } as never)
       .mockResolvedValueOnce({ id: 77, type: "C", status: "PROJECT" } as never)
@@ -1470,6 +1471,26 @@ describe("transaction tools", () => {
       }),
     ).rejects.toThrow(/after rounding to 2 decimal places/);
     expect(client.post).not.toHaveBeenCalled();
+  });
+
+  it("pay_purchase_invoice refuses an invoice with no currency", async () => {
+    vi.mocked(client.get).mockResolvedValueOnce({
+      id: 10,
+      status: "CONFIRMED",
+      payment_status: "NOT_PAID",
+      gross_price: 4,
+      clients_id: 3,
+      cl_currencies_id: "  ",
+    } as never);
+    await expect(
+      tools.pay_purchase_invoice.handler({
+        purchase_invoices_id: 10,
+        accounts_dimensions_id: 1,
+        date: "2026-10-01",
+      }),
+    ).rejects.toThrow(/has no currency/);
+    expect(client.post).not.toHaveBeenCalled();
+    expect(client.getAllPages).not.toHaveBeenCalled();
   });
 
   it("pay_purchase_invoice refuses a dimension that is not cash or bank in the invoice currency", async () => {

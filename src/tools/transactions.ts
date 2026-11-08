@@ -3,6 +3,7 @@ import { createVerifiedTransaction } from "../banking/create-verified-transactio
 import { errorMessage } from "../banking/errors.js";
 import {
   confirmedPaymentLink,
+  currencyCode,
   type DuplicateMatch,
   duplicatePaymentMessage,
   matchSupplierDraft,
@@ -544,7 +545,7 @@ export function createTransactionTools(client: EFinancialsClient) {
 
     pay_purchase_invoice: {
       description:
-        'Mark a CONFIRMED purchase invoice paid from a cash or bank dimension (for example account 1360, Arveldused aruandvate isikutega). Creates an outgoing transaction (type D, money out) and registers it against the invoice, which is the API form of the e-arveldaja posting "Ostuarve nr … tasumine". registered: true means the payment is registered; do not call again if the invoice could not be re-read. The posted amount is rounded to 2 decimal places with the same rounding as base_amount. Amount defaults to the invoice gross price when the invoice is unpaid, and must not exceed that gross price. A PARTIALLY_PAID invoice requires amount and is posted only when the unpaid remainder can be read from confirmed outgoing distributions in the invoice currency; the amount must not exceed that remainder. The payment is refused when the remainder is not known (settlements without amounts, paid_in_cash, or an unexplained related transaction). The dimension must be in the invoice currency and be a cash or bank account: its chart account is selectable for outgoing payments, or a bank account lists the dimension. A non-EUR invoice sends currency_rate and a base_amount scaled from base_gross_price using the rounded amount; pass currency_rate when the invoice has none. Refuses before any write when an outgoing PROJECT draft for this supplier, on this date, with this amount and currency, is linked to this invoice, or the invoice already has an outgoing CONFIRMED payment with this amount, currency, and date. The error names each matching transaction and why it matched. Pass allow_duplicate=true to pay anyway. When the stored direction cannot be confirmed as outgoing, the draft is kept but not registered (registered: false with its transaction_id). If registration fails, the draft is deleted.',
+        'Mark a CONFIRMED purchase invoice paid from a cash or bank dimension (for example account 1360, Arveldused aruandvate isikutega). Creates an outgoing transaction (type D, money out) and registers it against the invoice, which is the API form of the e-arveldaja posting "Ostuarve nr … tasumine". registered: true means the payment is registered; do not call again if the invoice could not be re-read. The posted amount is rounded to a fixed 2 decimal places for every currency, the same rounding as base_amount, not each currency\'s minor unit. Amount defaults to the invoice gross price when the invoice is unpaid, and must not exceed that gross price. A blank invoice currency is refused. A PARTIALLY_PAID invoice requires amount and is posted only when the unpaid remainder can be read from confirmed outgoing distributions in the invoice currency; the amount must not exceed that remainder. The payment is refused when the remainder is not known (settlements without amounts, paid_in_cash, or an unexplained related transaction). The dimension currency must match the invoice, and its chart account must be selectable for outgoing payments. A bank-account accounts_dimensions_id does not authorize the payment by itself; a row that points at this dimension without account_name_est and account_no, or more than one such row, is refused. A non-EUR invoice sends currency_rate and a base_amount scaled from base_gross_price using the rounded amount; pass currency_rate when the invoice has none. Refuses before any write when an outgoing PROJECT draft for this supplier, on this date, with this amount and currency, is linked to this invoice, or the invoice already has an outgoing CONFIRMED payment with this amount, currency, and date. The error names each matching transaction and why it matched. Pass allow_duplicate=true to pay anyway. When the stored direction cannot be confirmed as outgoing, the draft is kept but not registered (registered: false with its transaction_id). If registration fails, the draft is deleted.',
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -555,7 +556,7 @@ export function createTransactionTools(client: EFinancialsClient) {
           accounts_dimensions_id: {
             type: "number",
             description:
-              "Cash or bank dimension in the invoice currency. The chart account must be selectable for outgoing payments, or a bank account must list this dimension.",
+              "Dimension in the invoice currency whose chart account is selectable for outgoing payments. A bank-account accounts_dimensions_id does not authorize the payment by itself.",
           },
           date: {
             type: "string",
@@ -564,7 +565,7 @@ export function createTransactionTools(client: EFinancialsClient) {
           amount: {
             type: "number",
             description:
-              "Amount to pay in the invoice currency. Rounded to 2 decimal places before posting. Defaults to the invoice gross price when the invoice is not partly paid. Required when payment_status is PARTIALLY_PAID, and then cannot exceed the readable unpaid remainder.",
+              "Amount to pay in the invoice currency. Rounded to a fixed 2 decimal places for every currency before posting (not the currency's own minor unit). Defaults to the invoice gross price when the invoice is not partly paid. Required when payment_status is PARTIALLY_PAID, and then cannot exceed the readable unpaid remainder.",
           },
           description: {
             type: "string",
@@ -626,7 +627,12 @@ export function createTransactionTools(client: EFinancialsClient) {
         if (!invoice.clients_id) {
           throw new Error(`Purchase invoice ${args.purchase_invoices_id} has no supplier.`);
         }
-        const currency = invoice.cl_currencies_id || "EUR";
+        const currency = currencyCode(invoice.cl_currencies_id);
+        if (!currency) {
+          throw new Error(
+            `Purchase invoice ${args.purchase_invoices_id} has no currency, so the payment was not posted.`,
+          );
+        }
         let rate: number | undefined;
         if (currency !== "EUR") {
           const invoiceRate = (invoice as { currency_rate?: number | null }).currency_rate;

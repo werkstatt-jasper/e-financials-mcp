@@ -2,8 +2,10 @@ import { roundMoney } from "../money.js";
 import type { AccountDimension } from "../types/accounts.js";
 
 /**
- * OpenAPI `Currencies` has no minor-unit field. Posted amounts use `roundMoney`
- * (2 decimal places), the same rounding already applied to `base_amount`.
+ * Fixed 2 decimal places for every currency, via `roundMoney` (the same
+ * function as `base_amount`). This is not the currency's own minor unit:
+ * OpenAPI `Currencies` has no precision field, so a 0-decimal or 3-decimal
+ * currency is still rounded to 2.
  */
 export function roundedPaymentAmount(amount: number): number {
   return roundMoney(amount);
@@ -36,14 +38,59 @@ export interface PaymentAccount {
 }
 
 export interface PaymentBankAccount {
+  id?: unknown;
+  account_name_est?: unknown;
+  account_no?: unknown;
+  /** Present on the OpenAPI bank-account example, not in the schema properties. */
   accounts_dimensions_id?: unknown;
 }
 
+function positiveInteger(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    return null;
+  }
+  if (value <= 0 || value > Number.MAX_SAFE_INTEGER) {
+    return null;
+  }
+  return value;
+}
+
+function nonEmptyString(value: unknown): boolean {
+  return typeof value === "string" && value.trim() !== "";
+}
+
 /**
- * Cash/bank means the chart account is selectable for an outgoing payment
- * (`transaction_out_bindable` or `transaction_out_user_bindable`), or a bank
- * account row lists this dimension (`accounts_dimensions_id` in the OpenAPI
- * bank-account example). The dimension currency must be the invoice currency.
+ * `accounts_dimensions_id` is not an OpenAPI BankAccounts property. A row is a
+ * verified link only when that id is a positive integer and the row also has
+ * the required `account_name_est` and `account_no` (and a positive integer id
+ * when id is present). Any other row that still points at this dimension is
+ * an unverified claim.
+ */
+function bankDimensionClaims(
+  bankAccounts: readonly PaymentBankAccount[],
+  dimensionId: number,
+): { verified: number; unverified: number } {
+  let verified = 0;
+  let unverified = 0;
+  for (const account of bankAccounts) {
+    if (positiveInteger(account.accounts_dimensions_id) !== dimensionId) {
+      continue;
+    }
+    const idOk = account.id == null || positiveInteger(account.id) != null;
+    if (idOk && nonEmptyString(account.account_name_est) && nonEmptyString(account.account_no)) {
+      verified += 1;
+    } else {
+      unverified += 1;
+    }
+  }
+  return { verified, unverified };
+}
+
+/**
+ * The dimension currency must match the invoice. The chart account must be
+ * selectable for an outgoing payment. A bank-account `accounts_dimensions_id`
+ * does not authorize the payment by itself. An unverified or duplicate bank
+ * claim fails closed.
  * Returns an error message, or null when the dimension can be used.
  */
 export function paymentDimensionError(input: {
@@ -62,14 +109,15 @@ export function paymentDimensionError(input: {
   if (!dimensionCurrency) {
     return `Account dimension ${input.dimensionId} has no currency, so it cannot be checked against the invoice currency ${invoiceCurrency || "unknown"}.`;
   }
-  if (dimensionCurrency !== invoiceCurrency) {
+  if (!invoiceCurrency || dimensionCurrency !== invoiceCurrency) {
     return `Account dimension ${input.dimensionId} is in ${dimensionCurrency}, but the purchase invoice is in ${invoiceCurrency || "unknown"}.`;
   }
-  const bankLinked = input.bankAccounts.some(
-    (account) => account.accounts_dimensions_id === input.dimensionId,
-  );
-  if (bankLinked) {
-    return null;
+  const claims = bankDimensionClaims(input.bankAccounts, input.dimensionId);
+  if (claims.unverified > 0) {
+    return `Account dimension ${input.dimensionId} is listed on a bank account row that is missing account_name_est, account_no, or a positive integer id, so that link was not verified.`;
+  }
+  if (claims.verified > 1) {
+    return `Account dimension ${input.dimensionId} is listed on more than one bank account, so the link was not verified.`;
   }
   const account = input.accounts.find((row) => row.id === dimension.accounts_id);
   if (!account) {
@@ -78,7 +126,10 @@ export function paymentDimensionError(input: {
   if (account.transaction_out_bindable === true || account.transaction_out_user_bindable === true) {
     return null;
   }
-  return `Account dimension ${input.dimensionId} is not a cash or bank account in ${invoiceCurrency}. Chart account ${account.id} is not selectable for outgoing payments, and no bank account lists this dimension.`;
+  if (claims.verified === 1) {
+    return `Account dimension ${input.dimensionId} is listed on a bank account, but chart account ${account.id} is not selectable for outgoing payments. The bank link does not authorize the payment by itself.`;
+  }
+  return `Account dimension ${input.dimensionId} is not a cash or bank account in ${invoiceCurrency}. Chart account ${account.id} is not selectable for outgoing payments.`;
 }
 
 export interface InvoiceLinkRef {

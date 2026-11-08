@@ -47,10 +47,11 @@ function draft(overrides: Record<string, unknown> = {}) {
 }
 
 describe("purchase payment amount and currency", () => {
-  it("rounds with the same 2 decimal path as roundMoney", () => {
+  it("rounds every currency to a fixed 2 decimal places", () => {
     expect(roundedPaymentAmount(10.005)).toBe(10.01);
     expect(roundedPaymentAmount(10.004)).toBe(10);
     expect(roundedPaymentAmount(37.2)).toBe(37.2);
+    expect(roundedPaymentAmount(1000)).toBe(1000);
   });
 
   it("normalizes currency codes and compares rounded amounts", () => {
@@ -98,14 +99,100 @@ describe("payment dimension", () => {
     ).toBeNull();
   });
 
-  it("accepts a dimension listed on a bank account", () => {
+  const verifiedBank = {
+    id: 16,
+    account_name_est: "Pank",
+    account_no: "EE00",
+    accounts_dimensions_id: 7,
+  };
+
+  it("does not treat a bank-account dimension id as authorization", () => {
     expect(
       paymentDimensionError({
         dimensionId: 7,
         invoiceCurrency: "EUR",
         dimensions: [dimension],
         accounts: [],
+        bankAccounts: [verifiedBank],
+      }),
+    ).toMatch(/was not found/);
+    expect(
+      paymentDimensionError({
+        dimensionId: 7,
+        invoiceCurrency: "EUR",
+        dimensions: [dimension],
+        accounts: [{ id: 1360, transaction_out_bindable: true }],
+        bankAccounts: [verifiedBank],
+      }),
+    ).toBeNull();
+    expect(
+      paymentDimensionError({
+        dimensionId: 7,
+        invoiceCurrency: "EUR",
+        dimensions: [dimension],
+        accounts: [{ id: 1360 }],
+        bankAccounts: [verifiedBank],
+      }),
+    ).toMatch(/does not authorize/);
+    expect(
+      paymentDimensionError({
+        dimensionId: 7,
+        invoiceCurrency: "EUR",
+        dimensions: [dimension],
+        accounts: [{ id: 1360, transaction_out_bindable: true }],
         bankAccounts: [{ accounts_dimensions_id: 7 }],
+      }),
+    ).toMatch(/was not verified/);
+    expect(
+      paymentDimensionError({
+        dimensionId: 7,
+        invoiceCurrency: "EUR",
+        dimensions: [dimension],
+        accounts: [{ id: 1360, transaction_out_bindable: true }],
+        bankAccounts: [
+          { ...verifiedBank, id: "16" },
+          { ...verifiedBank, account_name_est: "  ", account_no: "EE00" },
+          { ...verifiedBank, account_no: "" },
+          { ...verifiedBank, id: 0 },
+          { ...verifiedBank, id: 1.5 },
+          { ...verifiedBank, account_name_est: 1 },
+          { ...verifiedBank, accounts_dimensions_id: 7.5 },
+          { ...verifiedBank, accounts_dimensions_id: Number.MAX_SAFE_INTEGER + 1 },
+          { account_name_est: "Pank", account_no: "EE00" },
+        ],
+      }),
+    ).toMatch(/was not verified/);
+    expect(
+      paymentDimensionError({
+        dimensionId: 7,
+        invoiceCurrency: "EUR",
+        dimensions: [dimension],
+        accounts: [{ id: 1360, transaction_out_bindable: true }],
+        bankAccounts: [verifiedBank, { ...verifiedBank, id: 17, account_no: "EE01" }],
+      }),
+    ).toMatch(/more than one bank account/);
+    expect(
+      paymentDimensionError({
+        dimensionId: 7,
+        invoiceCurrency: "EUR",
+        dimensions: [dimension],
+        accounts: [{ id: 1360, transaction_out_bindable: true }],
+        bankAccounts: [{ ...verifiedBank, id: undefined, accounts_dimensions_id: 8 }],
+      }),
+    ).toBeNull();
+    expect(
+      paymentDimensionError({
+        dimensionId: 7,
+        invoiceCurrency: "EUR",
+        dimensions: [dimension],
+        accounts: [{ id: 1360, transaction_out_bindable: true }],
+        bankAccounts: [
+          {
+            account_name_est: "Pank",
+            account_no: "EE00",
+            accounts_dimensions_id: 7,
+          },
+        ],
       }),
     ).toBeNull();
   });
