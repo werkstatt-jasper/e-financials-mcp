@@ -3,10 +3,10 @@ import type { Journal } from "../types/journal.js";
 
 /**
  * Default cap on /v1/journals list pages for ledger loads (statements, balances,
- * month-end). Was 100; large ledgers hit that with journal_list_truncated.
- * Override with `RIK_JOURNAL_LIST_MAX_PAGES`.
+ * month-end). Raised from 100 → 1000 → 2000 after a full-year ledger reported
+ * 1508 pages. Override with `RIK_JOURNAL_LIST_MAX_PAGES`.
  */
-export const JOURNAL_LIST_MAX_PAGES = 1000;
+export const JOURNAL_LIST_MAX_PAGES = 2000;
 
 /** Concurrent page requests once page 1 has reported total_pages. */
 export const JOURNAL_LIST_PAGE_CONCURRENCY = 4;
