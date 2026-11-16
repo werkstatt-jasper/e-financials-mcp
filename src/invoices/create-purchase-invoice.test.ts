@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EFinancialsClient } from "../client.js";
 import { createMockClient } from "../tools/test-helpers.js";
 import {
+  buildPurchaseInvoiceLineItem,
   createPurchaseInvoiceWithRepair,
   restoreRequestedReversedVat,
 } from "./create-purchase-invoice.js";
@@ -776,5 +777,38 @@ describe("restoreRequestedReversedVat", () => {
     const items = [{ id: 1 }];
     expect(restoreRequestedReversedVat(items, [7, 4])).toBe(items);
     expect(restoreRequestedReversedVat(items, [7, undefined])).toBe(items);
+  });
+});
+
+describe("buildPurchaseInvoiceLineItem", () => {
+  it("fills title, amount, and zero prices when the line omits them", () => {
+    const item = buildPurchaseInvoiceLineItem({}, { articles: [], isVatRegistered: true });
+    expect(item).toMatchObject({
+      custom_title: "Purchase",
+      amount: 1,
+      unit_net_price: 0,
+      total_net_price: 0,
+      vat_rate_dropdown: "-",
+    });
+    expect(item.cl_purchase_articles_id).toBeUndefined();
+  });
+
+  it("uses titleFallback and defaultArticleId, and derives unit price from total_net_price", () => {
+    const item = buildPurchaseInvoiceLineItem(
+      { total_net_price: 8 },
+      {
+        articles: [],
+        isVatRegistered: true,
+        titleFallback: "FAKE-FALLBACK",
+        defaultArticleId: 39,
+      },
+    );
+    expect(item).toMatchObject({
+      custom_title: "FAKE-FALLBACK",
+      amount: 1,
+      unit_net_price: 8,
+      total_net_price: 8,
+      cl_purchase_articles_id: 39,
+    });
   });
 });

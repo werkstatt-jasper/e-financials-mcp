@@ -9,9 +9,36 @@ export type PurchaseInvoiceItemPatch = {
   id?: number;
 } & Record<string, unknown>;
 
+/**
+ * New lines (no `id`) must supply the same core fields create uses: title,
+ * amount, a price, and a purchase article. Incomplete lines are rejected
+ * before any PATCH.
+ */
+export function assertNewPurchaseInvoiceLineComplete(line: PurchaseInvoiceItemPatch): void {
+  const missing: string[] = [];
+  if (typeof line.custom_title !== "string" || line.custom_title.trim() === "") {
+    missing.push("custom_title");
+  }
+  if (typeof line.amount !== "number") {
+    missing.push("amount");
+  }
+  if (typeof line.unit_net_price !== "number" && typeof line.total_net_price !== "number") {
+    missing.push("unit_net_price or total_net_price");
+  }
+  if (typeof line.cl_purchase_articles_id !== "number") {
+    missing.push("cl_purchase_articles_id");
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `New purchase invoice lines require custom_title, amount, a price (unit_net_price or total_net_price), and cl_purchase_articles_id. Missing: ${missing.join(", ")}.`,
+    );
+  }
+}
+
 export function mergePurchaseInvoiceItems(
   currentItems: Array<Record<string, unknown>>,
   patches: PurchaseInvoiceItemPatch[],
+  buildAppended: (fields: Record<string, unknown>) => Record<string, unknown> = (fields) => fields,
 ): Array<Record<string, unknown>> {
   const byId = new Map<number, Record<string, unknown>>();
   for (const item of currentItems) {
@@ -33,7 +60,7 @@ export function mergePurchaseInvoiceItems(
       }
       byId.set(id, { ...existing, ...defined, id });
     } else {
-      appended.push(defined);
+      appended.push(buildAppended(defined));
     }
   }
 
