@@ -4,7 +4,7 @@ Open-source MCP server for **e-arveldaja** (the online accounting software of RI
 
 ## Hosted: werkzeug.ee
 
-No install needed. Sign up at [werkzeug.ee](https://werkzeug.ee), get your personal MCP endpoint (`https://werkzeug.ee/mcp/c/<id>`) and paste it into Claude, ChatGPT or Cursor as a remote MCP server. Client-by-client steps: [werkzeug.ee/docs](https://werkzeug.ee/docs/).
+No install needed. Sign up at [werkzeug.ee](https://werkzeug.ee), get your personal MCP endpoint (`https://werkzeug.ee/mcp/c/<id>`) and paste it into Claude, ChatGPT, Cursor or Grok Bot as a remote MCP server. Client-by-client steps: [werkzeug.ee/docs](https://werkzeug.ee/docs/).
 
 Prefer to run it yourself over **stdio**? See [Quick start](#quick-start) below.
 
