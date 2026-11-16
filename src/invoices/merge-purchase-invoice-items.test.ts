@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertNewPurchaseInvoiceLineComplete,
   assertPurchaseLineDeletesAreNotPatched,
   mergePurchaseInvoiceItems,
   omitPurchaseInvoiceItems,
@@ -12,6 +13,71 @@ describe("mergePurchaseInvoiceItems", () => {
       [{ id: 1, custom_title: undefined, amount: 3 }],
     );
     expect(merged).toEqual([{ id: 1, custom_title: "keep", amount: 3 }]);
+  });
+
+  it("appends a line unchanged when no buildAppended is given", () => {
+    const merged = mergePurchaseInvoiceItems(
+      [{ id: 1, custom_title: "keep" }],
+      [{ custom_title: "FAKE-NEW", amount: 1, unit_net_price: 5, cl_purchase_articles_id: 39 }],
+    );
+    expect(merged).toEqual([
+      { id: 1, custom_title: "keep" },
+      { custom_title: "FAKE-NEW", amount: 1, unit_net_price: 5, cl_purchase_articles_id: 39 },
+    ]);
+  });
+
+  it("runs buildAppended only for lines without an id", () => {
+    const merged = mergePurchaseInvoiceItems(
+      [{ id: 1, custom_title: "keep" }],
+      [
+        { id: 1, amount: 3 },
+        { custom_title: "FAKE-NEW", amount: 1, unit_net_price: 5, cl_purchase_articles_id: 39 },
+      ],
+      (fields) => ({ ...fields, built: true }),
+    );
+    expect(merged).toEqual([
+      { id: 1, custom_title: "keep", amount: 3 },
+      {
+        custom_title: "FAKE-NEW",
+        amount: 1,
+        unit_net_price: 5,
+        cl_purchase_articles_id: 39,
+        built: true,
+      },
+    ]);
+  });
+});
+
+describe("assertNewPurchaseInvoiceLineComplete", () => {
+  const complete = {
+    custom_title: "FAKE-NEW",
+    amount: 1,
+    unit_net_price: 5,
+    cl_purchase_articles_id: 39,
+  };
+
+  it("accepts a line with title, amount, price, and article", () => {
+    expect(() => assertNewPurchaseInvoiceLineComplete(complete)).not.toThrow();
+    expect(() =>
+      assertNewPurchaseInvoiceLineComplete({
+        custom_title: "FAKE-NEW",
+        amount: 0,
+        total_net_price: 0,
+        cl_purchase_articles_id: 39,
+      }),
+    ).not.toThrow();
+  });
+
+  it("lists every missing field", () => {
+    expect(() => assertNewPurchaseInvoiceLineComplete({ vat_rate_dropdown: "-" })).toThrow(
+      "New purchase invoice lines require custom_title, amount, a price (unit_net_price or total_net_price), and cl_purchase_articles_id. Missing: custom_title, amount, unit_net_price or total_net_price, cl_purchase_articles_id.",
+    );
+  });
+
+  it("rejects a blank title", () => {
+    expect(() => assertNewPurchaseInvoiceLineComplete({ ...complete, custom_title: "  " })).toThrow(
+      /Missing: custom_title/,
+    );
   });
 });
 

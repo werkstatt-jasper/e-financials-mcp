@@ -27,6 +27,9 @@ export interface PurchaseInvoiceLineInput {
   base_net_price?: number;
   base_vat_price?: number;
   base_gross_price?: number;
+  products_id?: number;
+  vat_accounts_dimensions_id?: number;
+  cl_fringe_benefits_id?: number;
 }
 
 export interface CreatePurchaseInvoiceInput {
@@ -181,6 +184,90 @@ function buildLinesFromFriendlyParams(
   ];
 }
 
+export interface BuildPurchaseInvoiceLineOptions {
+  articles: PurchaseArticle[];
+  isVatRegistered: boolean;
+  titleFallback?: string;
+  defaultArticleId?: number;
+  invoiceClVatArticlesId?: number;
+  invoiceReversedVatId?: number;
+  currency?: string;
+  currencyRate?: number;
+}
+
+/**
+ * Build one purchase-invoice line in the shape RIK expects on create/append:
+ * `vat_rate` becomes `vat_rate_dropdown`, VAT defaults are applied, and
+ * `vat_rate` is not sent.
+ */
+export function buildPurchaseInvoiceLineItem(
+  line: PurchaseInvoiceLineInput,
+  options: BuildPurchaseInvoiceLineOptions,
+): ApiItem {
+  const {
+    articles,
+    isVatRegistered,
+    titleFallback,
+    defaultArticleId,
+    invoiceClVatArticlesId,
+    invoiceReversedVatId,
+    currency = "EUR",
+    currencyRate,
+  } = options;
+
+  const vatFields: PurchaseLineVatFields = {
+    cl_purchase_articles_id: line.cl_purchase_articles_id,
+    vat_rate_dropdown:
+      line.vat_rate_dropdown ??
+      (line.vat_rate != null ? formatVatRateDropdown(line.vat_rate) : undefined),
+    vat_accounts_id: line.vat_accounts_id,
+    cl_vat_articles_id: line.cl_vat_articles_id ?? invoiceClVatArticlesId,
+    purchase_accounts_id: line.purchase_accounts_id,
+    cl_fringe_benefits_id: line.cl_fringe_benefits_id,
+  };
+  const defaults = applyPurchaseVatDefaults(articles, vatFields, isVatRegistered);
+  const amount = line.amount ?? defaults.amount;
+  const unitNet = line.unit_net_price ?? line.total_net_price ?? 0;
+  const totalNet = line.total_net_price ?? roundMoney(unitNet * amount);
+  const rateStr = defaults.vat_rate_dropdown;
+  const rateNum = parseVatRateDropdown(rateStr);
+
+  const item: ApiItem = {
+    custom_title: line.custom_title || titleFallback || "Purchase",
+    amount,
+    unit_net_price: unitNet,
+    total_net_price: totalNet,
+    cl_purchase_articles_id: line.cl_purchase_articles_id ?? defaultArticleId,
+    purchase_accounts_dimensions_id: line.purchase_accounts_dimensions_id,
+    vat_rate_dropdown: rateStr,
+    vat_accounts_id: defaults.vat_accounts_id ?? line.vat_accounts_id,
+    cl_vat_articles_id: defaults.cl_vat_articles_id,
+    cl_fringe_benefits_id: defaults.cl_fringe_benefits_id,
+    reversed_vat_id: line.reversed_vat_id ?? invoiceReversedVatId,
+  };
+
+  if (line.products_id != null) {
+    item.products_id = line.products_id;
+  }
+  if (line.vat_accounts_dimensions_id != null) {
+    item.vat_accounts_dimensions_id = line.vat_accounts_dimensions_id;
+  }
+
+  if (!isVatRegistered && rateStr !== "-") {
+    item.project_no_vat_gross_price =
+      line.project_no_vat_gross_price ?? roundMoney(totalNet + totalNet * (rateNum / 100));
+  }
+
+  if (currency !== "EUR") {
+    const rate = currencyRate as number;
+    item.base_net_price = line.base_net_price ?? roundMoney(totalNet * rate);
+    item.base_vat_price = line.base_vat_price;
+    item.base_gross_price = line.base_gross_price;
+  }
+
+  return item;
+}
+
 /**
  * Create a purchase invoice draft, apply VAT defaults, then repair invoice-level
  * totals from API-computed line VAT (create-then-repair).
@@ -206,53 +293,18 @@ export async function createPurchaseInvoiceWithRepair(
     input.explicit_totals === true ||
     (input.vat_amount != null && input.total_amount != null && !input.items?.length);
 
-  /* v8 ignore start -- per-line optional coalescing for sparse RIK item shapes */
-  const apiItems: ApiItem[] = lineInputs.map((line) => {
-    const vatFields: PurchaseLineVatFields = {
-      cl_purchase_articles_id: line.cl_purchase_articles_id,
-      vat_rate_dropdown:
-        line.vat_rate_dropdown ??
-        (line.vat_rate != null ? formatVatRateDropdown(line.vat_rate) : undefined),
-      vat_accounts_id: line.vat_accounts_id,
-      cl_vat_articles_id: line.cl_vat_articles_id ?? input.cl_vat_articles_id,
-      purchase_accounts_id: line.purchase_accounts_id,
-    };
-    const defaults = applyPurchaseVatDefaults(articles, vatFields, isVatRegistered);
-    const amount = line.amount ?? defaults.amount ?? 1;
-    const unitNet = line.unit_net_price ?? line.total_net_price ?? 0;
-    const totalNet = line.total_net_price ?? roundMoney(unitNet * amount);
-    const rateStr = defaults.vat_rate_dropdown;
-    const rateNum = parseVatRateDropdown(rateStr);
-
-    const item: ApiItem = {
-      custom_title: line.custom_title || input.description || "Purchase",
-      amount,
-      unit_net_price: unitNet,
-      total_net_price: totalNet,
-      cl_purchase_articles_id: line.cl_purchase_articles_id ?? 39,
-      purchase_accounts_dimensions_id: line.purchase_accounts_dimensions_id,
-      vat_rate_dropdown: rateStr,
-      vat_accounts_id: defaults.vat_accounts_id ?? line.vat_accounts_id,
-      cl_vat_articles_id: defaults.cl_vat_articles_id ?? (rateNum > 0 ? 1 : undefined),
-      cl_fringe_benefits_id: defaults.cl_fringe_benefits_id,
-      reversed_vat_id: line.reversed_vat_id ?? input.reversed_vat_id,
-    };
-
-    if (!isVatRegistered && rateStr !== "-") {
-      item.project_no_vat_gross_price =
-        line.project_no_vat_gross_price ?? roundMoney(totalNet + totalNet * (rateNum / 100));
-    }
-
-    if (currency !== "EUR") {
-      const rate = input.currency_rate as number;
-      item.base_net_price = line.base_net_price ?? roundMoney(totalNet * rate);
-      item.base_vat_price = line.base_vat_price;
-      item.base_gross_price = line.base_gross_price;
-    }
-
-    return item;
-  });
-  /* v8 ignore stop */
+  const apiItems: ApiItem[] = lineInputs.map((line) =>
+    buildPurchaseInvoiceLineItem(line, {
+      articles,
+      isVatRegistered,
+      titleFallback: input.description || "Purchase",
+      defaultArticleId: 39,
+      invoiceClVatArticlesId: input.cl_vat_articles_id,
+      invoiceReversedVatId: input.reversed_vat_id,
+      currency,
+      currencyRate: input.currency_rate,
+    }),
+  );
 
   const linesNet = roundMoney(apiItems.reduce((s, i) => s + Number(i.total_net_price || 0), 0));
   const derivedVat = roundMoney(

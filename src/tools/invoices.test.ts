@@ -1931,12 +1931,16 @@ describe("invoice tools", () => {
     expect(description).toMatch(/no DELETE item endpoint/);
     expect(description).toMatch(/is_deleted is not a line field/);
     expect(description).toMatch(
-      /Deletion does not change header gross_price or vat_price unless total_amount or vat_amount is passed/,
+      /Deleting lines requires both total_amount and vat_amount; header totals are not recalculated/,
     );
     expect(description).toMatch(/Nonexistent delete_item_ids are rejected/);
     expect(description).toMatch(/A repeated id is a single deletion/);
-    expect(description).toMatch(/Deleting every line sends items: \[\]/);
+    expect(description).toMatch(
+      /A delete that would leave zero lines is refused \(a draft must keep at least one line; use delete_purchase_invoice to remove the draft\)/,
+    );
     expect(description).toMatch(/The same id cannot be both patched and deleted/);
+    expect(description).toMatch(/built the same way as create_purchase_invoice/);
+    expect(description).toMatch(/Incomplete new lines are refused before any PATCH/);
     expect(description).toMatch(/base_document_files_id/);
     expect(description).toMatch(
       /upstream can compute VAT once from the invoice net rather than per line/,
@@ -1951,17 +1955,19 @@ describe("invoice tools", () => {
     expect(deleteIds.description).toMatch(/omission/);
     expect(deleteIds.description).toMatch(/Nonexistent ids are rejected/);
     expect(deleteIds.description).toMatch(/repeated id is a single deletion/);
-    expect(deleteIds.description).toMatch(/Deleting every line sends items: \[\]/);
     expect(deleteIds.description).toMatch(
-      /Header gross_price and vat_price stay as they are unless total_amount or vat_amount is passed/,
+      /Deleting every line is refused \(a draft must keep at least one line; use delete_purchase_invoice to remove the draft\)/,
+    );
+    expect(deleteIds.description).toMatch(
+      /total_amount and vat_amount are required when deleting; header totals are not recalculated/,
     );
     expect(deleteIds.description).toMatch(/invoice net rather than per line/);
     expect(deleteIds.description).toMatch(/unless the user explicitly asks/);
     expect(tools.update_purchase_invoice.inputSchema.properties.total_amount.description).toMatch(
-      /Deleting lines does not change it/,
+      /Required together with vat_amount when deleting lines/,
     );
     expect(tools.update_purchase_invoice.inputSchema.properties.vat_amount.description).toMatch(
-      /Deleting lines does not change it/,
+      /Required together with total_amount when deleting lines/,
     );
   });
 
@@ -2061,16 +2067,19 @@ describe("invoice tools", () => {
   });
 
   it("update_purchase_invoice appends items without id", async () => {
-    vi.mocked(client.get).mockResolvedValueOnce({
-      ...invoicesFixture.purchase_get_for_patch,
-    } as never);
-    vi.mocked(client.patch).mockResolvedValue({
-      ...invoicesFixture.patch_purchase_result,
-    } as never);
+    mockPurchaseAppend({ ...invoicesFixture.purchase_get_for_patch });
 
     await tools.update_purchase_invoice.handler({
       id: 11,
-      items: [{ custom_title: "New line", amount: 1, unit_net_price: 5, products_id: 99 }],
+      items: [
+        {
+          custom_title: "New line",
+          amount: 1,
+          unit_net_price: 5,
+          cl_purchase_articles_id: 39,
+          products_id: 99,
+        },
+      ],
     });
 
     const body = vi.mocked(client.patch).mock.calls[0][1] as {
@@ -2082,6 +2091,7 @@ describe("invoice tools", () => {
       amount: 1,
       unit_net_price: 5,
       products_id: 99,
+      cl_purchase_articles_id: 39,
     });
   });
 
@@ -2166,6 +2176,8 @@ describe("invoice tools", () => {
     expect(items.description).toMatch(/cl_vat_articles_id/);
     expect(items.description).toMatch(/is_deleted/);
     expect(items.description).toMatch(/delete_item_ids/);
+    expect(items.description).toMatch(/built like create_purchase_invoice/);
+    expect(items.description).toMatch(/Incomplete new lines are refused/);
     expect(items.items.additionalProperties).toBe(false);
     expect(items.items.properties).toMatchObject({
       id: { type: "number" },
@@ -2317,11 +2329,40 @@ describe("invoice tools", () => {
     } as never);
   }
 
+  const fakePurchaseArticle = {
+    id: 39,
+    name_est: "FAKE-ARTICLE",
+    name_eng: "FAKE-ARTICLE",
+    vat_accounts_id: 1510,
+    cl_vat_articles_id: 1,
+  };
+
+  function mockPurchaseAppend(
+    current: Record<string, unknown>,
+    articles: Array<Record<string, unknown>> = [fakePurchaseArticle],
+  ) {
+    vi.mocked(client.get).mockImplementation(async (path: string) => {
+      if (path === "/v1/vat_info") {
+        return { vat_number: "EE1", tax_refnumber: "1" } as never;
+      }
+      return current as never;
+    });
+    vi.mocked(client.getAllPages).mockResolvedValue(articles as never);
+    vi.mocked(client.patch).mockResolvedValue({
+      ...invoicesFixture.patch_purchase_result,
+    } as never);
+  }
+
   it("update_purchase_invoice deletes one PROJECT line by sending only retained lines", async () => {
     const current = fakePurchaseDraft([fakeDrop, fakeKeepA, fakeKeepB]);
     mockPurchasePatch(current);
 
-    await tools.update_purchase_invoice.handler({ id: 11, delete_item_ids: [502] });
+    await tools.update_purchase_invoice.handler({
+      id: 11,
+      delete_item_ids: [502],
+      total_amount: 17.36,
+      vat_amount: 3.36,
+    });
 
     const body = vi.mocked(client.patch).mock.calls[0][1] as {
       items: Array<Record<string, unknown>>;
@@ -2336,8 +2377,8 @@ describe("invoice tools", () => {
     expect(body.items[1]).toBe(fakeKeepB);
     expect(body.base_document_files_id).toBe(900001);
     expect(body.client_name).toBe("FAKE-SUPPLIER");
-    expect(body.gross_price).toBe(100);
-    expect(body.vat_price).toBe(0);
+    expect(body.gross_price).toBe(17.36);
+    expect(body.vat_price).toBe(3.36);
     expect(body).not.toHaveProperty("is_deleted");
     expect(JSON.stringify(body.items)).not.toContain("is_deleted");
   });
@@ -2346,7 +2387,12 @@ describe("invoice tools", () => {
     const orphan = { custom_title: "FAKE-ORPHAN", amount: 1, unit_net_price: 1 };
     mockPurchasePatch(fakePurchaseDraft([orphan, fakeKeepA, fakeDrop]));
 
-    await tools.update_purchase_invoice.handler({ id: 11, delete_item_ids: [502] });
+    await tools.update_purchase_invoice.handler({
+      id: 11,
+      delete_item_ids: [502],
+      total_amount: 13.4,
+      vat_amount: 2.4,
+    });
 
     const body = vi.mocked(client.patch).mock.calls[0][1] as {
       items: Array<Record<string, unknown>>;
@@ -2356,7 +2402,7 @@ describe("invoice tools", () => {
   });
 
   it("update_purchase_invoice patches a sibling and appends while deleting another line", async () => {
-    mockPurchasePatch(fakePurchaseDraft([fakeKeepA, fakeDrop, fakeKeepB]));
+    mockPurchaseAppend(fakePurchaseDraft([fakeKeepA, fakeDrop, fakeKeepB]));
 
     await tools.update_purchase_invoice.handler({
       id: 11,
@@ -2365,7 +2411,13 @@ describe("invoice tools", () => {
       vat_amount: 2.4,
       items: [
         { id: 501, custom_title: "FAKE-PATCHED" },
-        { custom_title: "FAKE-NEW", amount: 1, unit_net_price: 7, products_id: 880001 },
+        {
+          custom_title: "FAKE-NEW",
+          amount: 1,
+          unit_net_price: 7,
+          cl_purchase_articles_id: 39,
+          products_id: 880001,
+        },
       ],
     });
 
@@ -2388,8 +2440,14 @@ describe("invoice tools", () => {
       custom_title: "FAKE-NEW",
       amount: 1,
       unit_net_price: 7,
+      total_net_price: 7,
       products_id: 880001,
+      cl_purchase_articles_id: 39,
+      vat_rate_dropdown: "-",
+      vat_accounts_id: 1510,
+      cl_vat_articles_id: 1,
     });
+    expect(body.items[2]).not.toHaveProperty("vat_rate");
     expect(body.gross_price).toBe(14.4);
     expect(body.vat_price).toBe(2.4);
     expect(body.base_document_files_id).toBe(900001);
@@ -2402,6 +2460,8 @@ describe("invoice tools", () => {
       id: 11,
       delete_item_ids: [502],
       reversed_vat_id: 7,
+      total_amount: 12.4,
+      vat_amount: 2.4,
     });
 
     const body = vi.mocked(client.patch).mock.calls[0][1] as {
@@ -2416,42 +2476,255 @@ describe("invoice tools", () => {
     });
   });
 
-  it("update_purchase_invoice sends an empty items array when the only line is deleted", async () => {
+  it("update_purchase_invoice refuses deleting the only line before the PATCH", async () => {
     mockPurchasePatch(fakePurchaseDraft([fakeDrop], { base_document_files_id: null }));
 
-    await tools.update_purchase_invoice.handler({ id: 11, delete_item_ids: [502] });
-
-    const body = vi.mocked(client.patch).mock.calls[0][1] as Record<string, unknown>;
-    expect(body.items).toEqual([]);
-    expect(body.base_document_files_id).toBeNull();
-    expect(body.clients_id).toBe(1);
-    expect(body.number).toBe("P11");
+    await expect(
+      tools.update_purchase_invoice.handler({
+        id: 11,
+        delete_item_ids: [502],
+        total_amount: 0,
+        vat_amount: 0,
+      }),
+    ).rejects.toThrow(
+      "A draft must keep at least one line; use delete_purchase_invoice to remove the draft.",
+    );
+    expect(client.get).toHaveBeenCalledWith("/v1/purchase_invoices/11");
+    expect(client.patch).not.toHaveBeenCalled();
   });
 
-  it("update_purchase_invoice sends no lines when every id is deleted", async () => {
+  it("update_purchase_invoice refuses deleting every line before the PATCH", async () => {
     mockPurchasePatch(fakePurchaseDraft([fakeKeepA, fakeDrop, fakeKeepB]));
+
+    await expect(
+      tools.update_purchase_invoice.handler({
+        id: 11,
+        delete_item_ids: [503, 501, 502],
+        total_amount: 0,
+        vat_amount: 0,
+      }),
+    ).rejects.toThrow(
+      "A draft must keep at least one line; use delete_purchase_invoice to remove the draft.",
+    );
+    expect(client.patch).not.toHaveBeenCalled();
+  });
+
+  it("update_purchase_invoice refuses deleting every line even when totals are omitted", async () => {
+    mockPurchasePatch(fakePurchaseDraft([fakeKeepA]));
+
+    await expect(
+      tools.update_purchase_invoice.handler({ id: 11, delete_item_ids: [501] }),
+    ).rejects.toThrow(
+      "A draft must keep at least one line; use delete_purchase_invoice to remove the draft.",
+    );
+    expect(client.patch).not.toHaveBeenCalled();
+  });
+
+  it("update_purchase_invoice refuses a delete when total_amount or vat_amount is omitted", async () => {
+    const current = fakePurchaseDraft([fakeKeepA, fakeDrop]);
+    vi.mocked(client.get).mockResolvedValue(current as never);
+
+    await expect(
+      tools.update_purchase_invoice.handler({ id: 11, delete_item_ids: [502] }),
+    ).rejects.toThrow(
+      "Deleting purchase invoice lines requires total_amount and vat_amount. Pass both for the remaining lines; header totals are not recalculated.",
+    );
+    await expect(
+      tools.update_purchase_invoice.handler({
+        id: 11,
+        delete_item_ids: [502],
+        total_amount: 12.4,
+      }),
+    ).rejects.toThrow(/requires total_amount and vat_amount/);
+    await expect(
+      tools.update_purchase_invoice.handler({
+        id: 11,
+        delete_item_ids: [502],
+        vat_amount: 2.4,
+      }),
+    ).rejects.toThrow(/requires total_amount and vat_amount/);
+    expect(client.patch).not.toHaveBeenCalled();
+  });
+
+  it("update_purchase_invoice builds an appended line like create_purchase_invoice", async () => {
+    mockPurchaseAppend(fakePurchaseDraft([fakeKeepA]));
 
     await tools.update_purchase_invoice.handler({
       id: 11,
-      delete_item_ids: [503, 501, 502],
+      items: [
+        {
+          custom_title: "FAKE-NEW",
+          amount: 2,
+          unit_net_price: 10,
+          cl_purchase_articles_id: 39,
+          vat_rate: 24,
+          products_id: 880001,
+          vat_accounts_dimensions_id: 41442,
+          cl_fringe_benefits_id: 2,
+        },
+      ],
+    });
+
+    expect(client.getAllPages).toHaveBeenCalledWith("/v1/purchase_articles");
+    expect(client.get).toHaveBeenCalledWith("/v1/vat_info");
+    const body = vi.mocked(client.patch).mock.calls[0][1] as {
+      items: Array<Record<string, unknown>>;
+    };
+    expect(body.items).toHaveLength(2);
+    expect(body.items[0]).toBe(fakeKeepA);
+    expect(body.items[1]).toEqual({
+      custom_title: "FAKE-NEW",
+      amount: 2,
+      unit_net_price: 10,
+      total_net_price: 20,
+      cl_purchase_articles_id: 39,
+      purchase_accounts_dimensions_id: undefined,
+      vat_rate_dropdown: "24",
+      vat_accounts_id: 1510,
+      cl_vat_articles_id: 1,
+      cl_fringe_benefits_id: 2,
+      reversed_vat_id: undefined,
+      products_id: 880001,
+      vat_accounts_dimensions_id: 41442,
+    });
+    expect(body.items[1]).not.toHaveProperty("vat_rate");
+  });
+
+  it("update_purchase_invoice applies VAT defaults and currency base prices on a new line", async () => {
+    mockPurchaseAppend(
+      fakePurchaseDraft([fakeKeepA], { cl_currencies_id: "USD", currency_rate: 0.9 }),
+    );
+
+    await tools.update_purchase_invoice.handler({
+      id: 11,
+      items: [
+        {
+          custom_title: "FAKE-USD",
+          amount: 1,
+          total_net_price: 10,
+          cl_purchase_articles_id: 39,
+          vat_rate_dropdown: "24",
+        },
+      ],
     });
 
     const body = vi.mocked(client.patch).mock.calls[0][1] as {
-      items: unknown[];
-      base_document_files_id: number;
+      items: Array<Record<string, unknown>>;
+    };
+    expect(body.items[1]).toEqual({
+      custom_title: "FAKE-USD",
+      amount: 1,
+      unit_net_price: 10,
+      total_net_price: 10,
+      cl_purchase_articles_id: 39,
+      purchase_accounts_dimensions_id: undefined,
+      vat_rate_dropdown: "24",
+      vat_accounts_id: 1510,
+      cl_vat_articles_id: 1,
+      cl_fringe_benefits_id: 1,
+      reversed_vat_id: undefined,
+      base_net_price: 9,
+      base_vat_price: undefined,
+      base_gross_price: undefined,
+    });
+    expect(body.items[1]).not.toHaveProperty("vat_rate");
+  });
+
+  it("update_purchase_invoice defaults currency to EUR when the draft has no currency code", async () => {
+    mockPurchaseAppend(fakePurchaseDraft([fakeKeepA], { cl_currencies_id: null }));
+
+    await tools.update_purchase_invoice.handler({
+      id: 11,
+      items: [
+        {
+          custom_title: "FAKE-EUR",
+          amount: 1,
+          unit_net_price: 5,
+          cl_purchase_articles_id: 39,
+        },
+      ],
+    });
+
+    const body = vi.mocked(client.patch).mock.calls[0][1] as {
+      items: Array<Record<string, unknown>>;
+    };
+    expect(body.items[1]).not.toHaveProperty("base_net_price");
+    expect(body.items[1]).not.toHaveProperty("vat_rate");
+  });
+
+  it("update_purchase_invoice refuses an incomplete new line before the PATCH", async () => {
+    vi.mocked(client.get).mockResolvedValue(fakePurchaseDraft([fakeKeepA]) as never);
+
+    await expect(
+      tools.update_purchase_invoice.handler({
+        id: 11,
+        items: [{ vat_rate_dropdown: "-" }],
+      }),
+    ).rejects.toThrow(
+      "New purchase invoice lines require custom_title, amount, a price (unit_net_price or total_net_price), and cl_purchase_articles_id. Missing: custom_title, amount, unit_net_price or total_net_price, cl_purchase_articles_id.",
+    );
+    await expect(
+      tools.update_purchase_invoice.handler({
+        id: 11,
+        items: [
+          {
+            custom_title: "FAKE-NEW",
+            amount: 1,
+            unit_net_price: 5,
+            vat_rate: 24,
+          },
+        ],
+      }),
+    ).rejects.toThrow(/Missing: cl_purchase_articles_id/);
+    expect(client.get).toHaveBeenCalledWith("/v1/purchase_invoices/11");
+    expect(client.getAllPages).not.toHaveBeenCalled();
+    expect(client.patch).not.toHaveBeenCalled();
+  });
+
+  it("update_purchase_invoice can replace every existing line by appending a new one", async () => {
+    mockPurchaseAppend(fakePurchaseDraft([fakeKeepA, fakeDrop]));
+
+    await tools.update_purchase_invoice.handler({
+      id: 11,
+      delete_item_ids: [501, 502],
+      total_amount: 12.4,
+      vat_amount: 2.4,
+      items: [
+        {
+          custom_title: "FAKE-REPLACEMENT",
+          amount: 1,
+          unit_net_price: 10,
+          cl_purchase_articles_id: 39,
+          vat_rate: 24,
+        },
+      ],
+    });
+
+    const body = vi.mocked(client.patch).mock.calls[0][1] as {
+      items: Array<Record<string, unknown>>;
       gross_price: number;
       vat_price: number;
     };
-    expect(body.items).toEqual([]);
-    expect(body.base_document_files_id).toBe(900001);
-    expect(body.gross_price).toBe(100);
-    expect(body.vat_price).toBe(0);
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]).toMatchObject({
+      custom_title: "FAKE-REPLACEMENT",
+      vat_rate_dropdown: "24",
+      vat_accounts_id: 1510,
+    });
+    expect(body.items[0]).not.toHaveProperty("vat_rate");
+    expect(body.gross_price).toBe(12.4);
+    expect(body.vat_price).toBe(2.4);
   });
 
   it("update_purchase_invoice treats a repeated delete id as one deletion and keeps header totals", async () => {
     mockPurchasePatch(fakePurchaseDraft([fakeKeepA, fakeDrop]));
 
-    await tools.update_purchase_invoice.handler({ id: 11, delete_item_ids: [502, 502] });
+    await tools.update_purchase_invoice.handler({
+      id: 11,
+      delete_item_ids: [502, 502],
+      total_amount: 12.4,
+      vat_amount: 2.4,
+    });
 
     const body = vi.mocked(client.patch).mock.calls[0][1] as {
       items: Array<Record<string, unknown>>;
@@ -2460,8 +2733,8 @@ describe("invoice tools", () => {
     };
     expect(body.items).toEqual([fakeKeepA]);
     expect(body.items[0]).toBe(fakeKeepA);
-    expect(body.gross_price).toBe(100);
-    expect(body.vat_price).toBe(0);
+    expect(body.gross_price).toBe(12.4);
+    expect(body.vat_price).toBe(2.4);
   });
 
   it("update_purchase_invoice treats an empty delete_item_ids list as no deletion", async () => {
