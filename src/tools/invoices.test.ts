@@ -1931,7 +1931,7 @@ describe("invoice tools", () => {
     expect(description).toMatch(/no DELETE item endpoint/);
     expect(description).toMatch(/is_deleted is not a line field/);
     expect(description).toMatch(
-      /Deleting lines requires both total_amount and vat_amount; header totals are not recalculated/,
+      /Appending or deleting lines requires both total_amount and vat_amount; header totals are not recalculated/,
     );
     expect(description).toMatch(/Nonexistent delete_item_ids are rejected/);
     expect(description).toMatch(/A repeated id is a single deletion/);
@@ -1964,10 +1964,13 @@ describe("invoice tools", () => {
     expect(deleteIds.description).toMatch(/invoice net rather than per line/);
     expect(deleteIds.description).toMatch(/unless the user explicitly asks/);
     expect(tools.update_purchase_invoice.inputSchema.properties.total_amount.description).toMatch(
-      /Required together with vat_amount when deleting lines/,
+      /Required together with vat_amount when appending or deleting lines/,
     );
     expect(tools.update_purchase_invoice.inputSchema.properties.vat_amount.description).toMatch(
-      /Required together with total_amount when deleting lines/,
+      /Required together with total_amount when appending or deleting lines/,
+    );
+    expect(tools.update_purchase_invoice.inputSchema.properties.items.description).toMatch(
+      /Appending a line requires both total_amount and vat_amount; header totals are not recalculated/,
     );
   });
 
@@ -2071,6 +2074,8 @@ describe("invoice tools", () => {
 
     await tools.update_purchase_invoice.handler({
       id: 11,
+      total_amount: 105,
+      vat_amount: 0,
       items: [
         {
           custom_title: "New line",
@@ -2084,6 +2089,8 @@ describe("invoice tools", () => {
 
     const body = vi.mocked(client.patch).mock.calls[0][1] as {
       items: Array<Record<string, unknown>>;
+      gross_price: number;
+      vat_price: number;
     };
     expect(body.items).toHaveLength(3);
     expect(body.items[2]).toMatchObject({
@@ -2093,6 +2100,8 @@ describe("invoice tools", () => {
       products_id: 99,
       cl_purchase_articles_id: 39,
     });
+    expect(body.gross_price).toBe(105);
+    expect(body.vat_price).toBe(0);
   });
 
   it("update_purchase_invoice rejects unknown item id", async () => {
@@ -2546,11 +2555,50 @@ describe("invoice tools", () => {
     expect(client.patch).not.toHaveBeenCalled();
   });
 
+  it("update_purchase_invoice refuses an append when total_amount or vat_amount is omitted", async () => {
+    const completeLine = {
+      custom_title: "FAKE-NEW",
+      amount: 1,
+      unit_net_price: 3,
+      cl_purchase_articles_id: 39,
+      vat_rate: 24,
+    };
+    vi.mocked(client.get).mockResolvedValue(fakePurchaseDraft([fakeKeepA]) as never);
+
+    await expect(
+      tools.update_purchase_invoice.handler({
+        id: 11,
+        items: [completeLine],
+      }),
+    ).rejects.toThrow(
+      "Appending purchase invoice lines requires total_amount and vat_amount. Pass both for the resulting invoice; header totals are not recalculated.",
+    );
+    await expect(
+      tools.update_purchase_invoice.handler({
+        id: 11,
+        items: [completeLine],
+        total_amount: 24.72,
+      }),
+    ).rejects.toThrow(/requires total_amount and vat_amount/);
+    await expect(
+      tools.update_purchase_invoice.handler({
+        id: 11,
+        items: [completeLine],
+        vat_amount: 0.72,
+      }),
+    ).rejects.toThrow(/requires total_amount and vat_amount/);
+    expect(client.get).toHaveBeenCalledWith("/v1/purchase_invoices/11");
+    expect(client.getAllPages).not.toHaveBeenCalled();
+    expect(client.patch).not.toHaveBeenCalled();
+  });
+
   it("update_purchase_invoice builds an appended line like create_purchase_invoice", async () => {
     mockPurchaseAppend(fakePurchaseDraft([fakeKeepA]));
 
     await tools.update_purchase_invoice.handler({
       id: 11,
+      total_amount: 24.72,
+      vat_amount: 0.72,
       items: [
         {
           custom_title: "FAKE-NEW",
@@ -2569,6 +2617,8 @@ describe("invoice tools", () => {
     expect(client.get).toHaveBeenCalledWith("/v1/vat_info");
     const body = vi.mocked(client.patch).mock.calls[0][1] as {
       items: Array<Record<string, unknown>>;
+      gross_price: number;
+      vat_price: number;
     };
     expect(body.items).toHaveLength(2);
     expect(body.items[0]).toBe(fakeKeepA);
@@ -2588,6 +2638,8 @@ describe("invoice tools", () => {
       vat_accounts_dimensions_id: 41442,
     });
     expect(body.items[1]).not.toHaveProperty("vat_rate");
+    expect(body.gross_price).toBe(24.72);
+    expect(body.vat_price).toBe(0.72);
   });
 
   it("update_purchase_invoice applies VAT defaults and currency base prices on a new line", async () => {
@@ -2597,6 +2649,8 @@ describe("invoice tools", () => {
 
     await tools.update_purchase_invoice.handler({
       id: 11,
+      total_amount: 12.4,
+      vat_amount: 2.4,
       items: [
         {
           custom_title: "FAKE-USD",
@@ -2635,6 +2689,8 @@ describe("invoice tools", () => {
 
     await tools.update_purchase_invoice.handler({
       id: 11,
+      total_amount: 17.4,
+      vat_amount: 2.4,
       items: [
         {
           custom_title: "FAKE-EUR",
