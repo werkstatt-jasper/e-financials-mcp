@@ -165,6 +165,52 @@ describe("registerMcpPromptHandlers", () => {
       "Missing required prompt argument: x",
     );
   });
+
+  it("lists workflow prompts alongside getting-started", async () => {
+    registerMcpPromptHandlers({ setRequestHandler }, buildAllPrompts());
+    const listFn = setRequestHandler.mock.calls[0][1] as () => Promise<{
+      prompts: { name: string }[];
+    }>;
+    const names = (await listFn()).prompts.map((prompt) => prompt.name);
+    expect(names).toContain("book-invoice");
+    expect(names).toContain("company-overview");
+  });
+
+  it("renders a workflow prompt after parsing typed arguments", async () => {
+    registerMcpPromptHandlers({ setRequestHandler }, buildAllPrompts());
+    const getFn = setRequestHandler.mock.calls[1][1] as (req: {
+      params: { name: string; arguments?: Record<string, string> };
+    }) => Promise<{ messages: { content: { text: string } }[] }>;
+
+    const result = await getFn({
+      params: { name: "month-end-close", arguments: { month: "2026-02" } },
+    });
+    expect(result.messages[0].content.text).toContain("2026-02-01");
+    expect(result.messages[0].content.text).toContain("2026-02-28");
+    expect(mockLoggerInfo).toHaveBeenCalledWith(
+      expect.objectContaining({ component: "prompt", prompt: "month-end-close", outcome: "ok" }),
+      "mcp prompt get",
+    );
+  });
+
+  it("logs invalid_args when a workflow schema rejects the arguments", async () => {
+    registerMcpPromptHandlers({ setRequestHandler }, buildAllPrompts());
+    const getFn = setRequestHandler.mock.calls[1][1] as (req: {
+      params: { name: string; arguments?: Record<string, string> };
+    }) => Promise<unknown>;
+
+    await expect(
+      getFn({ params: { name: "book-invoice", arguments: { file_path: "   " } } }),
+    ).rejects.toThrow(/file_path/);
+    expect(mockLoggerWarn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        component: "prompt",
+        prompt: "book-invoice",
+        outcome: "invalid_args",
+      }),
+      "mcp prompt get",
+    );
+  });
 });
 
 describe("registerMcpResourceHandlers", () => {

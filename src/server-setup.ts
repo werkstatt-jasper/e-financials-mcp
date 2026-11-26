@@ -12,7 +12,12 @@ import {
 
 import type { EFinancialsClient } from "./client.js";
 import { logger } from "./logger.js";
-import type { PromptRecord } from "./prompts.js";
+import {
+  collectPromptArgValues,
+  normalizePromptArgValues,
+  type PromptRecord,
+  type PromptRenderResult,
+} from "./prompts.js";
 import type { ResourceRegistry } from "./resources.js";
 import { matchUriTemplate } from "./resources.js";
 import { createAccountBalanceTools } from "./tools/account-balance.js";
@@ -31,6 +36,7 @@ import { createProductTools } from "./tools/products.js";
 import { createReferenceTools } from "./tools/reference.js";
 import { createReportTools } from "./tools/reports.js";
 import { createTransactionTools } from "./tools/transactions.js";
+import { parseToolArgs } from "./validation/tool-args.js";
 
 // biome-ignore lint/suspicious/noExplicitAny: tool handlers use per-tool param shapes
 export type ToolHandler = (params: any) => Promise<{
@@ -109,33 +115,45 @@ export function registerMcpPromptHandlers(
       throw new Error(`Unknown prompt: ${name}`);
     }
 
-    const argValues: Record<string, string> = {};
-    if (args) {
-      for (const [key, value] of Object.entries(args)) {
-        if (typeof value === "string") {
-          argValues[key] = value;
-        }
-      }
-    }
+    const argValues = collectPromptArgValues(args as Record<string, unknown> | undefined);
 
-    for (const argDef of prompt.arguments ?? []) {
-      if (argDef.required && !argValues[argDef.name]?.trim()) {
+    let result: PromptRenderResult;
+    if (prompt.argsSchema) {
+      try {
+        const parsed = parseToolArgs(prompt.argsSchema, normalizePromptArgValues(argValues));
+        result = prompt.render(parsed as Record<string, unknown>);
+      } catch (error) {
         const durationMs = Math.round(performance.now() - promptCallStart);
         logger.warn(
           {
             component: "prompt",
             prompt: name,
             durationMs,
-            outcome: "missing_required_arg",
-            argument: argDef.name,
+            outcome: "invalid_args",
           },
           "mcp prompt get",
         );
-        throw new Error(`Missing required prompt argument: ${argDef.name}`);
+        throw error;
       }
+    } else {
+      for (const argDef of prompt.arguments ?? []) {
+        if (argDef.required && !argValues[argDef.name]?.trim()) {
+          const durationMs = Math.round(performance.now() - promptCallStart);
+          logger.warn(
+            {
+              component: "prompt",
+              prompt: name,
+              durationMs,
+              outcome: "missing_required_arg",
+              argument: argDef.name,
+            },
+            "mcp prompt get",
+          );
+          throw new Error(`Missing required prompt argument: ${argDef.name}`);
+        }
+      }
+      result = prompt.render(argValues);
     }
-
-    const result = prompt.render(argValues);
     const durationMs = Math.round(performance.now() - promptCallStart);
     logger.info(
       {
