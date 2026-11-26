@@ -298,6 +298,13 @@ The server advertises the tools listed in [Tools at a glance](#tools-at-a-glance
 | Prompt | Description |
 |--------|-------------|
 | `getting-started` | Introduces the tool surface, `efinancials://` resources, and safe-usage conventions. Optional `focus` argument to emphasize a topic. |
+| `book-invoice` | Book a purchase invoice from a source document (extract or collect fields, validate, resolve the supplier, preview, then create and register only after approval). Required `file_path`. |
+| `month-end-close` | Run the month-end close checklist, work through blockers, and prepare financial statements. Required `month` (`YYYY-MM`). |
+| `reconcile-bank` | Match unconfirmed bank transactions to invoices, optionally auto-confirm unambiguous exact matches, and surface transfers. Dry-run first. Optional `mode` (`auto` / `review` / `transaction`), `transaction_id`, `accounts_dimensions_id`, and date range. |
+| `import-camt` | Parse a CAMT.053 statement, preview a dry run, and create PROJECT transactions only after approval. Required `file_path`; optional `accounts_dimensions_id` and date range. |
+| `classify-unmatched` | Classify unmatched bank transactions, preview purchase-invoice bookings, and apply them only after approval. Optional `accounts_dimensions_id` and date range. |
+| `new-supplier` | Look up an existing supplier or, after approval, create a new supplier client. Required `identifier` (name or 8-digit Estonian registry code). |
+| `company-overview` | Read-only dashboard of the company's current financial state (VAT context, statements, aging, unprocessed items). |
 
 ### Resources
 
