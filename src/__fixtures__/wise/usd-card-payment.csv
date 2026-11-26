@@ -1,0 +1,2 @@
+ID,Status,Direction,Created on,Finished on,Source fee amount,Source fee currency,Target fee amount,Target fee currency,Source name,Source amount (after fees),Source currency,Target name,Target amount (after fees),Target currency,Exchange rate,Reference,Batch,Created by,Category,Note
+CARD-2002,COMPLETED,OUT,2026-03-02 12:00:00,2026-03-02 12:10:00,1.50,USD,0,EUR,Example Holder OÜ,42.00,USD,Fictional Merchant Inc,38.64,EUR,0.920000,CARD-2002,,,Shopping,Fake fixture USD card payment
