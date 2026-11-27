@@ -3,10 +3,12 @@ import type { Transaction } from "../types/transaction.js";
 import {
   buildWiseDescription,
   buildWiseDuplicateIndex,
+  canonicalWiseDescription,
   escapeWiseDescription,
   findWiseDuplicate,
   rememberWiseEntry,
   stripWiseMarker,
+  WISE_DESCRIPTION_MAX_LEN,
   WISE_MARKER_PREFIX,
   type WiseImportEntry,
   wiseEntrySignatureHex,
@@ -203,5 +205,43 @@ describe("duplicate index", () => {
       15,
     );
     expect(index.byIdKind.get("fee:TRF-1001")).toEqual([15]);
+  });
+
+  it("round-trips a 100+ character description through the marker and signature fallback", () => {
+    const description =
+      "Fictional Merchant With An Extraordinarily Long Counterparty Name LLC (Shopping) [38.64 EUR @ 0.92] extra padding to exceed one hundred characters";
+    expect(description.length).toBeGreaterThan(100);
+    const longEntry = entry({
+      counterparty: "Fictional Merchant With An Extraordinarily Long Counterparty Name LLC",
+      description,
+    });
+    const stored = buildWiseDescription(longEntry);
+    expect(stored.length).toBeLessThanOrEqual(WISE_DESCRIPTION_MAX_LEN);
+    const truncated = stripWiseMarker(stored);
+    expect(truncated).toBe(canonicalWiseDescription(longEntry));
+    expect(truncated.length).toBeLessThan(description.length);
+    expect(stored).toContain(`sig=${wiseEntrySignatureHex(longEntry)}`);
+
+    const markedIndex = buildWiseDuplicateIndex([
+      tx({
+        bank_account_name: longEntry.counterparty ?? null,
+        description: stored,
+      }),
+    ]);
+    expect(findWiseDuplicate(longEntry, markedIndex)?.reason).toMatch(/Wise ID match/);
+
+    const strippedIndex = buildWiseDuplicateIndex([
+      tx({
+        bank_account_name: longEntry.counterparty ?? null,
+        description: truncated,
+      }),
+    ]);
+    expect(findWiseDuplicate(longEntry, strippedIndex)?.reason).toMatch(
+      /date\/amount\/counterparty/,
+    );
+
+    const remembered = buildWiseDuplicateIndex([]);
+    rememberWiseEntry(remembered, longEntry, 77);
+    expect(findWiseDuplicate(longEntry, remembered)?.transaction_ids).toEqual([77]);
   });
 });

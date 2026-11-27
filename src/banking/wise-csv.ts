@@ -80,7 +80,13 @@ function normalizeCurrency(value: string, fallback = "EUR"): string {
  * Parse a Wise Transactions CSV export (not a statement export).
  * The first row must include the standard header names; a UTF-8 BOM is ignored.
  */
-export function parseWiseCsv(csv: string): WiseCsvRow[] {
+export interface ParsedWiseCsv {
+  rows: WiseCsvRow[];
+  /** Data rows dropped because they were too short to map against the header. */
+  short_row_count: number;
+}
+
+export function parseWiseCsv(csv: string): ParsedWiseCsv {
   const records = parseCsv(csv).filter((record) => record.some((value) => value.trim() !== ""));
   const [headerRow, ...dataRows] = records;
   if (headerRow == null || dataRows.length === 0) {
@@ -101,8 +107,10 @@ export function parseWiseCsv(csv: string): WiseCsvRow[] {
 
   const idx = (name: string) => headerIndex(headers, name);
   const rows: WiseCsvRow[] = [];
+  let short_row_count = 0;
   for (const fields of dataRows) {
     if (fields.length < headers.length - 2) {
+      short_row_count += 1;
       continue;
     }
     rows.push({
@@ -135,7 +143,7 @@ export function parseWiseCsv(csv: string): WiseCsvRow[] {
       note: field(fields, idx("Note")).trim(),
     });
   }
-  return rows;
+  return { rows, short_row_count };
 }
 
 /** `2026-01-19 17:59:56` → `2026-01-19`. Falls back to created-on when finished-on is empty. */
@@ -222,8 +230,8 @@ export function counterpartyName(row: WiseCsvRow): string | undefined {
  * self-transfer. Pass `skip_jar_transfers=false` to import them anyway.
  */
 export function isJarTransfer(row: WiseCsvRow): boolean {
-  const haystack = `${row.category} ${row.note} ${row.reference}`.toLowerCase();
-  if (haystack.includes("jar")) {
+  const haystack = `${row.category} ${row.note} ${row.reference}`;
+  if (/\bjar\b/i.test(haystack)) {
     return true;
   }
   const source = normalizeMatchText(row.sourceName);
@@ -233,7 +241,7 @@ export function isJarTransfer(row: WiseCsvRow): boolean {
     target !== "" &&
     source === target &&
     normalizeCurrency(row.sourceCurrency) === normalizeCurrency(row.targetCurrency) &&
-    row.sourceFeeAmount === 0
+    bookedFeeAmount(row) === 0
   );
 }
 

@@ -24,7 +24,7 @@ import {
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "../__fixtures__/wise");
 
 function firstRow(csvText: string) {
-  const row = parseWiseCsv(csvText)[0];
+  const row = parseWiseCsv(csvText).rows[0];
   if (row == null) {
     throw new Error("expected a parsed Wise row");
   }
@@ -115,7 +115,7 @@ describe("parseWiseCsv", () => {
   it("parses the EUR incoming fixture and strips a UTF-8 BOM", () => {
     const raw = readFileSync(join(fixtures, "eur-incoming.csv"), "utf8");
     const withBom = `\uFEFF${raw}`;
-    const [row] = parseWiseCsv(withBom);
+    const [row] = parseWiseCsv(withBom).rows;
     expect(row).toMatchObject({
       id: "TRF-1001",
       status: "COMPLETED",
@@ -135,7 +135,9 @@ describe("parseWiseCsv", () => {
 
   it("skips short rows and rejects non-numeric amounts", () => {
     const shortAndGood = `${HEADER}\nonly-one-field\n${cells({ ID: "ok-1" })}\n`;
-    expect(parseWiseCsv(shortAndGood)).toHaveLength(1);
+    const parsed = parseWiseCsv(shortAndGood);
+    expect(parsed.rows).toHaveLength(1);
+    expect(parsed.short_row_count).toBe(1);
     expect(() => parseWiseCsv(csv([cells({ "Source amount (after fees)": "n/a" })]))).toThrow(
       /Source amount \(after fees\)/,
     );
@@ -164,15 +166,21 @@ describe("parseWiseCsv", () => {
       "",
     ];
     const parsed = parseWiseCsv(`${HEADER}\n${required.join(",")}\n`);
-    expect(parsed).toHaveLength(1);
-    expect(parsed[0]).toMatchObject({ id: "cut-1", reference: "REF-CUT", category: "", note: "" });
+    expect(parsed.rows).toHaveLength(1);
+    expect(parsed.short_row_count).toBe(0);
+    expect(parsed.rows[0]).toMatchObject({
+      id: "cut-1",
+      reference: "REF-CUT",
+      category: "",
+      note: "",
+    });
   });
 
   it("defaults missing optional currencies and empty numbers", () => {
     const header =
       "ID,Status,Direction,Source amount (after fees),Target amount (after fees),Exchange rate";
     const parsed = parseWiseCsv(`${header}\nid-2,COMPLETED,IN,5,,\n`);
-    expect(parsed[0]).toMatchObject({
+    expect(parsed.rows[0]).toMatchObject({
       id: "id-2",
       sourceAmount: 5,
       targetAmount: 0,
@@ -325,6 +333,29 @@ describe("isJarTransfer", () => {
     expect(normalizeMatchText("  Foo   Bar ")).toBe("foo bar");
     expect(normalizeMatchText(null)).toBe("");
     expect(normalizeMatchText(undefined)).toBe("");
+  });
+
+  it("does not treat Jarvis or a booked target-side fee as a Jar", () => {
+    const jarvis = firstRow(
+      csv([cells({ Category: "Jarvis", "Source name": "A", "Target name": "B" })]),
+    );
+    expect(isJarTransfer(jarvis)).toBe(false);
+
+    const targetFeeSelf = firstRow(
+      csv([
+        cells({
+          Direction: "IN",
+          "Source name": "Example Holder OÜ",
+          "Target name": "Example Holder OÜ",
+          "Source fee amount": "0",
+          "Target fee amount": "0.4",
+          "Source currency": "EUR",
+          "Target currency": "EUR",
+        }),
+      ]),
+    );
+    expect(bookedFeeAmount(targetFeeSelf)).toBe(0.4);
+    expect(isJarTransfer(targetFeeSelf)).toBe(false);
   });
 });
 

@@ -67,22 +67,69 @@ function signatureParts(entry: {
   ].join("|");
 }
 
-export function wiseEntrySignatureHex(entry: WiseImportEntry): string {
+const SIGNATURE_HEX_LEN = 16;
+
+function selectWiseMarker(id: string, kind: WiseEntryKind, sig: string, maxLen: number): string {
+  const variants = [
+    formatMarker({ id, kind, sig }),
+    formatMarker({ id: id.slice(0, 24), kind, sig }),
+    formatMarker({ id: "", kind, sig }),
+  ];
+  let marker = formatMarker({ id: "", kind, sig });
+  for (const candidate of variants) {
+    if (candidate.length <= maxLen) {
+      marker = candidate;
+      break;
+    }
+  }
+  return marker.slice(0, maxLen);
+}
+
+/**
+ * Operator-facing text actually stored with the marker: escaped and sliced
+ * to the budget that remains after the marker. Hash and signature fallback
+ * must use this truncated form so re-imports still match.
+ */
+export function canonicalWiseDescription(
+  entry: Pick<WiseImportEntry, "wiseId" | "kind" | "description">,
+  maxLen = WISE_DESCRIPTION_MAX_LEN,
+): string {
+  const escaped = escapeWiseDescription(entry.description);
+  if (escaped === "") {
+    return "";
+  }
+  const placeholder = selectWiseMarker(
+    entry.wiseId,
+    entry.kind,
+    "0".repeat(SIGNATURE_HEX_LEN),
+    maxLen,
+  );
+  const budget = maxLen - placeholder.length - 1;
+  if (budget <= 0) {
+    return "";
+  }
+  return escaped.slice(0, budget);
+}
+
+function entrySignatureParts(entry: WiseImportEntry, maxLen = WISE_DESCRIPTION_MAX_LEN): string {
+  return signatureParts({
+    date: entry.date,
+    type: entry.type,
+    currency: entry.currency,
+    amount: entry.amount,
+    counterparty: entry.counterparty,
+    reference: entry.reference,
+    description: canonicalWiseDescription(entry, maxLen),
+  });
+}
+
+export function wiseEntrySignatureHex(
+  entry: WiseImportEntry,
+  maxLen = WISE_DESCRIPTION_MAX_LEN,
+): string {
   return sha256Hex(
-    JSON.stringify([
-      entry.wiseId,
-      entry.kind,
-      signatureParts({
-        date: entry.date,
-        type: entry.type,
-        currency: entry.currency,
-        amount: entry.amount,
-        counterparty: entry.counterparty,
-        reference: entry.reference,
-        description: entry.description,
-      }),
-    ]),
-  ).slice(0, 16);
+    JSON.stringify([entry.wiseId, entry.kind, entrySignatureParts(entry, maxLen)]),
+  ).slice(0, SIGNATURE_HEX_LEN);
 }
 
 export function escapeWiseDescription(text: string): string {
@@ -188,29 +235,13 @@ export function buildWiseDescription(
   entry: WiseImportEntry,
   maxLen = WISE_DESCRIPTION_MAX_LEN,
 ): string {
-  const escaped = escapeWiseDescription(entry.description);
-  const sig = wiseEntrySignatureHex(entry);
-  const variants = [
-    formatMarker({ id: entry.wiseId, kind: entry.kind, sig }),
-    formatMarker({ id: entry.wiseId.slice(0, 24), kind: entry.kind, sig }),
-    formatMarker({ id: "", kind: entry.kind, sig }),
-  ];
-  let marker = formatMarker({ id: "", kind: entry.kind, sig });
-  for (const candidate of variants) {
-    if (candidate.length <= maxLen) {
-      marker = candidate;
-      break;
-    }
-  }
-  marker = marker.slice(0, maxLen);
-  if (escaped === "") {
+  const canonical = canonicalWiseDescription(entry, maxLen);
+  const sig = wiseEntrySignatureHex(entry, maxLen);
+  const marker = selectWiseMarker(entry.wiseId, entry.kind, sig, maxLen);
+  if (canonical === "") {
     return marker;
   }
-  const budget = maxLen - marker.length - 1;
-  if (budget <= 0) {
-    return marker;
-  }
-  return `${escaped.slice(0, budget)} ${marker}`;
+  return `${canonical} ${marker}`;
 }
 
 export function buildWiseDuplicateIndex(existing: Transaction[]): WiseDuplicateIndex {
@@ -266,15 +297,7 @@ export function findWiseDuplicate(
           : "Already imported (Wise ID match)",
     };
   }
-  const sigKey = signatureParts({
-    date: entry.date,
-    type: entry.type,
-    currency: entry.currency,
-    amount: entry.amount,
-    counterparty: entry.counterparty,
-    reference: entry.reference,
-    description: entry.description,
-  });
+  const sigKey = entrySignatureParts(entry);
   const sigHits = index.bySignature.get(sigKey);
   if (sigHits != null && sigHits.length > 0) {
     return {
@@ -297,16 +320,5 @@ export function rememberWiseEntry(index: WiseDuplicateIndex, entry: WiseImportEn
     map.set(key, list);
   };
   add(index.byIdKind, wiseIdKindKey(entry.wiseId, entry.kind));
-  add(
-    index.bySignature,
-    signatureParts({
-      date: entry.date,
-      type: entry.type,
-      currency: entry.currency,
-      amount: entry.amount,
-      counterparty: entry.counterparty,
-      reference: entry.reference,
-      description: entry.description,
-    }),
-  );
+  add(index.bySignature, entrySignatureParts(entry));
 }

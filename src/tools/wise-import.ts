@@ -54,6 +54,27 @@ function jsonResult(payload: unknown) {
   };
 }
 
+const BASE64_PREFIX = "base64:";
+
+/**
+ * `resolveFileInput` cannot magic-byte sniff CSV, so a bare `base64:<data>`
+ * payload is rejected as ambiguous. Treat that form as `base64:csv:<data>`.
+ * An explicit `base64:<ext>:<data>` hint is left unchanged.
+ */
+export function normalizeWiseImportFilePath(filePath: string): string {
+  if (!filePath.startsWith(BASE64_PREFIX)) {
+    return filePath;
+  }
+  const body = filePath.slice(BASE64_PREFIX.length);
+  const firstColon = body.indexOf(":");
+  const hasExtHint =
+    firstColon > 0 && firstColon <= 5 && /^[A-Za-z0-9]+$/.test(body.slice(0, firstColon));
+  if (hasExtHint) {
+    return filePath;
+  }
+  return `${BASE64_PREFIX}csv:${body}`;
+}
+
 function inDateRange(date: string, dateFrom?: string, dateTo?: string): boolean {
   if (dateFrom != null && date < dateFrom) {
     return false;
@@ -168,18 +189,19 @@ export function createWiseImportTools(client: EFinancialsClient) {
           throw new Error("date_from must be on or before date_to");
         }
 
-        const file = await resolveFileInput(args.file_path);
+        const file = await resolveFileInput(normalizeWiseImportFilePath(args.file_path));
         if (file.extension !== ".csv") {
           throw new Error("Wise import input must be CSV (path or base64:csv: payload)");
         }
 
-        const rows = parseWiseCsv(file.buffer.toString("utf8"));
+        const parsed = parseWiseCsv(file.buffer.toString("utf8"));
+        const rows = parsed.rows;
         const skipJars = args.skip_jar_transfers !== false;
         const execute = args.execute === true;
 
         const skipped: unknown[] = [];
         const eligible: Array<{ row: (typeof rows)[number]; date: string; type: "C" | "D" }> = [];
-        let filteredOut = 0;
+        let filteredOut = parsed.short_row_count;
 
         for (const row of rows) {
           const date = wiseTransactionDate(row);
@@ -281,85 +303,90 @@ export function createWiseImportTools(client: EFinancialsClient) {
                 }
               : undefined;
 
-          const mainDup = findWiseDuplicate(mainEntry, index);
           let mainAvailableForFee = false;
 
-          if (mainDup != null) {
-            recordSkip({
-              wise_id: row.id,
-              date,
-              amount,
-              currency,
-              kind: "main",
-              duplicate_transaction_ids: mainDup.transaction_ids,
-              reason: mainDup.reason,
-            });
-            rememberWiseEntry(index, mainEntry, mainDup.transaction_ids[0]);
+          if (amount === 0) {
+            // A 0.00 main booking is not useful; still allow a positive fee row.
             mainAvailableForFee = true;
           } else {
-            const body = entryPayload(mainEntry, dimensionId, {
-              currencyRate: fx?.currencyRate,
-              baseAmount: fx?.baseAmount,
-            });
-            const storedDescription = body.description;
-
-            if (!execute) {
-              createdCount += 1;
-              results.push({
-                status: "would_create",
+            const mainDup = findWiseDuplicate(mainEntry, index);
+            if (mainDup != null) {
+              recordSkip({
                 wise_id: row.id,
-                kind: "main",
                 date,
                 amount,
                 currency,
-                type,
-                description: mainEntry.description,
-                stored_description: storedDescription,
-                counterparty: mainEntry.counterparty,
-                ref_number: mainEntry.reference,
-                currency_rate: fx?.currencyRate,
-                base_amount: fx?.baseAmount,
+                kind: "main",
+                duplicate_transaction_ids: mainDup.transaction_ids,
+                reason: mainDup.reason,
               });
-              rememberWiseEntry(index, mainEntry);
+              rememberWiseEntry(index, mainEntry, mainDup.transaction_ids[0]);
               mainAvailableForFee = true;
             } else {
-              try {
-                const created = await createVerifiedTransaction(client, body);
+              const body = entryPayload(mainEntry, dimensionId, {
+                currencyRate: fx?.currencyRate,
+                baseAmount: fx?.baseAmount,
+              });
+              const storedDescription = body.description;
+
+              if (!execute) {
                 createdCount += 1;
                 results.push({
-                  status: "created",
+                  status: "would_create",
                   wise_id: row.id,
                   kind: "main",
                   date,
                   amount,
                   currency,
-                  type: created.type,
+                  type,
                   description: mainEntry.description,
                   stored_description: storedDescription,
                   counterparty: mainEntry.counterparty,
                   ref_number: mainEntry.reference,
                   currency_rate: fx?.currencyRate,
                   base_amount: fx?.baseAmount,
-                  api_id: created.id,
-                  rik_messages: created.rik_messages,
-                  direction_confirmed: created.direction_confirmed,
-                  read_back_error: created.read_back_error,
                 });
-                rememberWiseEntry(index, mainEntry, created.id);
+                rememberWiseEntry(index, mainEntry);
                 mainAvailableForFee = true;
-                if (!created.direction_confirmed) {
-                  unconfirmedCount += 1;
+              } else {
+                try {
+                  const created = await createVerifiedTransaction(client, body);
+                  createdCount += 1;
+                  results.push({
+                    status: "created",
+                    wise_id: row.id,
+                    kind: "main",
+                    date,
+                    amount,
+                    currency,
+                    type: created.type,
+                    description: mainEntry.description,
+                    stored_description: storedDescription,
+                    counterparty: mainEntry.counterparty,
+                    ref_number: mainEntry.reference,
+                    currency_rate: fx?.currencyRate,
+                    base_amount: fx?.baseAmount,
+                    api_id: created.id,
+                    rik_messages: created.rik_messages,
+                    direction_confirmed: created.direction_confirmed,
+                    read_back_error: created.read_back_error,
+                  });
+                  rememberWiseEntry(index, mainEntry, created.id);
+                  mainAvailableForFee = true;
+                  if (!created.direction_confirmed) {
+                    unconfirmedCount += 1;
+                  }
+                } catch (err) {
+                  errorCount += 1;
+                  errors.push({
+                    wise_id: row.id,
+                    kind: "main",
+                    date,
+                    amount,
+                    currency,
+                    message: errorMessage(err),
+                  });
                 }
-              } catch (err) {
-                errorCount += 1;
-                errors.push({
-                  wise_id: row.id,
-                  kind: "main",
-                  date,
-                  amount,
-                  currency,
-                  message: errorMessage(err),
-                });
               }
             }
           }
@@ -471,7 +498,7 @@ export function createWiseImportTools(client: EFinancialsClient) {
           mode: execute ? "EXECUTED" : "DRY_RUN",
           fee_account_dimensions_id: feeAccountDimensionId,
           summary: {
-            total_csv_rows: rows.length,
+            total_csv_rows: rows.length + parsed.short_row_count,
             eligible_rows: eligible.length,
             filtered_out: filteredOut,
             created_count: createdCount,

@@ -7,7 +7,11 @@ import type { EFinancialsClient } from "../client.js";
 import type { AccountDimension } from "../types/accounts.js";
 import type { Transaction } from "../types/transaction.js";
 import { createMockClient, parseToolJson } from "./test-helpers.js";
-import { createWiseImportTools, resolveWiseFeeAccountDimensionId } from "./wise-import.js";
+import {
+  createWiseImportTools,
+  normalizeWiseImportFilePath,
+  resolveWiseFeeAccountDimensionId,
+} from "./wise-import.js";
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "../__fixtures__/wise");
 
@@ -74,6 +78,15 @@ describe("resolveWiseFeeAccountDimensionId", () => {
     expect(() =>
       resolveWiseFeeAccountDimensionId([bankDimension, feeDimension, second], undefined, 9),
     ).toThrow(/multiple dimensions \(20, 21\)/);
+  });
+});
+
+describe("normalizeWiseImportFilePath", () => {
+  it("leaves paths and explicit hints alone, and adds csv to a bare base64 payload", () => {
+    expect(normalizeWiseImportFilePath("/tmp/wise.csv")).toBe("/tmp/wise.csv");
+    expect(normalizeWiseImportFilePath("base64:csv:abc")).toBe("base64:csv:abc");
+    expect(normalizeWiseImportFilePath("base64:xml:abc")).toBe("base64:xml:abc");
+    expect(normalizeWiseImportFilePath("base64:abc")).toBe("base64:csv:abc");
   });
 });
 
@@ -696,5 +709,87 @@ fx-in-1,COMPLETED,IN,2026-01-16 09:00:00,2026-01-16 09:00:00,0,USD,2,EUR,Custome
       amount: 2,
       currency: "EUR",
     });
+  });
+
+  it("accepts a bare base64: payload and an explicit base64:csv: payload", async () => {
+    const csv = readFileSync(join(fixtures, "eur-incoming.csv"), "utf8");
+    const encoded = Buffer.from(csv, "utf8").toString("base64");
+    const bare = parseToolJson(
+      await tools.import_wise_transactions.handler({
+        file_path: `base64:${encoded}`,
+        accounts_dimensions_id: 9,
+      }),
+    ) as { mode: string; results: Array<{ wise_id: string }> };
+    expect(bare.mode).toBe("DRY_RUN");
+    expect(bare.results[0]?.wise_id).toBe("TRF-1001");
+
+    const hinted = parseToolJson(
+      await tools.import_wise_transactions.handler({
+        file_path: `base64:csv:${encoded}`,
+        accounts_dimensions_id: 9,
+      }),
+    ) as { results: Array<{ wise_id: string }> };
+    expect(hinted.results[0]?.wise_id).toBe("TRF-1001");
+  });
+
+  it("skips a zero-amount main row and still creates the fee", async () => {
+    const header =
+      "ID,Status,Direction,Source amount (after fees),Target amount (after fees),Exchange rate,Source fee amount,Source fee currency,Target fee amount,Created on,Finished on,Source name,Target name,Source currency,Target currency";
+    const csv = `${header}
+ZERO-FEE,COMPLETED,OUT,0,0,1,1.5,EUR,0,2026-03-01 10:00:00,2026-03-01 10:00:00,Holder,Payee,EUR,EUR
+`;
+    const data = parseToolJson(
+      await tools.import_wise_transactions.handler({
+        file_path: filePath(csv),
+        accounts_dimensions_id: 9,
+      }),
+    ) as {
+      results: Array<{
+        status: string;
+        kind: string;
+        wise_id: string;
+        amount: number;
+        type: string;
+      }>;
+      summary: { created_count: number; eligible_rows: number };
+    };
+    expect(data.results).toHaveLength(1);
+    expect(data.results[0]).toMatchObject({
+      status: "would_create",
+      kind: "fee",
+      wise_id: "FEE:ZERO-FEE",
+      amount: 1.5,
+      type: "D",
+    });
+    expect(data.summary.created_count).toBe(1);
+    expect(data.summary.eligible_rows).toBe(1);
+  });
+
+  it("counts short CSV rows in filtered_out", async () => {
+    const header =
+      "ID,Status,Direction,Source amount (after fees),Target amount (after fees),Exchange rate,Created on,Finished on,Source name,Target name";
+    const csv = `${header}
+only-one-field
+KEEP,COMPLETED,OUT,12,12,1,2026-03-11 10:00:00,2026-03-11 10:00:00,A,B
+`;
+    const data = parseToolJson(
+      await tools.import_wise_transactions.handler({
+        file_path: filePath(csv),
+        accounts_dimensions_id: 9,
+      }),
+    ) as {
+      results: Array<{ wise_id: string }>;
+      summary: {
+        total_csv_rows: number;
+        filtered_out: number;
+        eligible_rows: number;
+        created_count: number;
+      };
+    };
+    expect(data.summary.total_csv_rows).toBe(2);
+    expect(data.summary.filtered_out).toBe(1);
+    expect(data.summary.eligible_rows).toBe(1);
+    expect(data.summary.created_count).toBe(1);
+    expect(data.results[0]?.wise_id).toBe("KEEP");
   });
 });
