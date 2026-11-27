@@ -1,0 +1,2 @@
+ID,Status,Direction,Created on,Finished on,Source fee amount,Source fee currency,Target fee amount,Target fee currency,Source name,Source amount (after fees),Source currency,Target name,Target amount (after fees),Target currency,Exchange rate,Reference,Batch,Created by,Category,Note
+TRF-1001,COMPLETED,IN,2026-03-01 10:00:00,2026-03-01 10:05:00,0,EUR,0,EUR,Example Customer OÜ,150.00,EUR,Example Holder OÜ,150.00,EUR,1.000000,INV-1001,,,General,Fake fixture incoming EUR payment

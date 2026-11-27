@@ -31,6 +31,7 @@ import { createProductTools } from "./tools/products.js";
 import { createReferenceTools } from "./tools/reference.js";
 import { createReportTools } from "./tools/reports.js";
 import { createTransactionTools } from "./tools/transactions.js";
+import { createWiseImportTools } from "./tools/wise-import.js";
 
 // biome-ignore lint/suspicious/noExplicitAny: tool handlers use per-tool param shapes
 export type ToolHandler = (params: any) => Promise<{
@@ -64,6 +65,7 @@ export function buildAllTools(client: EFinancialsClient): ToolRecord {
     ...createBankReconciliationTools(client),
     ...createClassifyBankTools(client),
     ...createCamt053Tools(client),
+    ...createWiseImportTools(client),
   };
 }
 

@@ -11,6 +11,7 @@ JSON samples mirror shapes returned by the e-Financials REST API (pagination, li
 | `transactions.json` | Paginated transactions, single entity, multi-page pagination slices, reconciliation list row, generic HTTP mock bodies |
 | `invoices.json` | Sales invoice list, GET body for patch flow, reconciliation sale/purchase list items |
 | `error-responses.json` | JSON bodies for HTTP and API-level errors (`response_code`, `message`, `errors[]`) and success-with-`response_code` |
+| `wise/*.csv` | Clearly fake Wise transaction-history CSV exports (EUR incoming, USD card payment with fee, Jar / filter rows) |
 
 ## Importing in tests (ESM)
 

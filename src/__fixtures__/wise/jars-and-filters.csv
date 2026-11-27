@@ -1,0 +1,8 @@
+ID,Status,Direction,Created on,Finished on,Source fee amount,Source fee currency,Target fee amount,Target fee currency,Source name,Source amount (after fees),Source currency,Target name,Target amount (after fees),Target currency,Exchange rate,Reference,Batch,Created by,Category,Note
+EUR-4004,COMPLETED,OUT,2026-03-04 09:00:00,2026-03-04 09:01:00,0.40,EUR,0,EUR,Example Holder OÜ,80.00,EUR,Fictional Supplier OÜ,80.00,EUR,1.000000,PAY-4004,,,General,Fake fixture EUR outgoing payment
+JAR-3003,COMPLETED,OUT,2026-03-03 08:00:00,2026-03-03 08:00:00,0,EUR,0,EUR,Example Holder OÜ,20.00,EUR,Example Holder OÜ,20.00,EUR,1.000000,,,,Jar,Fake fixture jar top-up
+NOTE-3005,COMPLETED,IN,2026-03-05 11:00:00,2026-03-05 11:00:00,0,EUR,0,EUR,Example Holder OÜ,5.00,EUR,Example Saver OÜ,5.00,EUR,1.000000,,,,General,Fake fixture jar withdrawal
+REF-3006,COMPLETED,OUT,2026-03-06 11:00:00,2026-03-06 11:00:00,0,EUR,0,EUR,Example Holder OÜ,7.00,EUR,Pocket Example,7.00,EUR,1.000000,JAR-TRANSFER,,,General,Fake fixture jar reference
+PENDING-9,PENDING,OUT,2026-03-07 11:00:00,2026-03-07 11:00:00,0,EUR,0,EUR,Example Holder OÜ,9.00,EUR,Someone,9.00,EUR,1.000000,,,,General,Fake fixture pending row
+NEUTRAL-8,COMPLETED,NEUTRAL,2026-03-08 11:00:00,2026-03-08 11:00:00,0,EUR,0,EUR,Example Holder OÜ,0.00,EUR,Example Holder OÜ,0.00,EUR,1.000000,,,,General,Fake fixture currency conversion
+ZERO-7,COMPLETED,OUT,2026-03-09 11:00:00,2026-03-09 11:00:00,0,EUR,0,EUR,Example Holder OÜ,0.00,EUR,Nobody,0.00,EUR,1.000000,,,,General,Fake fixture zero amount
