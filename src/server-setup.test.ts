@@ -189,6 +189,7 @@ describe("registerMcpResourceHandlers", () => {
 
     const resources = await listResourcesFn();
     expect(resources.resources.some((r) => r.uri === "efinancials://server_info")).toBe(true);
+    expect(resources.resources.some((r) => r.uri === "efinancials://tax_rules")).toBe(true);
     const templates = await listTemplatesFn();
     expect(templates.resourceTemplates).toEqual([]);
   });
@@ -201,6 +202,29 @@ describe("registerMcpResourceHandlers", () => {
 
     const result = await readFn({ params: { uri: "efinancials://server_info" } });
     expect(JSON.parse(result.contents[0].text)).toMatchObject({ name: "e-financials" });
+    expect(mockLoggerInfo).toHaveBeenCalledWith(
+      expect.objectContaining({ component: "resource", outcome: "ok" }),
+      "mcp resource read",
+    );
+  });
+
+  it("reads tax_rules resource", async () => {
+    registerMcpResourceHandlers({ setRequestHandler }, buildAllResources());
+    const readFn = setRequestHandler.mock.calls[2][1] as (req: {
+      params: { uri: string };
+    }) => Promise<{ contents: { text: string }[] }>;
+
+    const result = await readFn({ params: { uri: "efinancials://tax_rules" } });
+    const parsed = JSON.parse(result.contents[0].text) as {
+      advisory: boolean;
+      standardVatRateTimeline: { rate: number; from: string }[];
+    };
+    expect(parsed.advisory).toBe(true);
+    expect(
+      parsed.standardVatRateTimeline.some(
+        (period) => period.rate === 24 && period.from === "2025-07-01",
+      ),
+    ).toBe(true);
     expect(mockLoggerInfo).toHaveBeenCalledWith(
       expect.objectContaining({ component: "resource", outcome: "ok" }),
       "mcp resource read",

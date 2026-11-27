@@ -29,7 +29,7 @@ const GETTING_STARTED_TEXT = `You are connected to the e-Financials MCP server f
 ## Capabilities
 - **Tools** — accounting operations (transactions, clients, invoices, accounts, journals, products, reports, reference data).
 - **Prompts** — guided workflows (this getting-started prompt is a placeholder; richer prompts ship in later releases).
-- **Resources** — read-only server metadata under the \`efinancials://\` URI scheme.
+- **Resources** — read-only server-authored content under the \`efinancials://\` URI scheme (for example \`efinancials://server_info\` and the advisory \`efinancials://tax_rules\` reference).
 
 ## Safe usage
 1. Prefer **read/list** tools before create/update/delete operations.
@@ -40,7 +40,8 @@ const GETTING_STARTED_TEXT = `You are connected to the e-Financials MCP server f
 
 ## Next steps
 - Call \`list_tools\` (or inspect the tool catalog) and pick the smallest tool that answers the user's question.
-- Read \`efinancials://server_info\` for server name, version, and capability summary.`;
+- Read \`efinancials://server_info\` for server name, version, and capability summary.
+- Read \`efinancials://tax_rules\` for the advisory Estonian VAT-rate timeline, reduced rates, deduction restrictions, and tax-free limits. It does not file VAT returns or create EMTA prepayments.`;
 
 export function buildAllPrompts(): PromptRecord {
   return {
