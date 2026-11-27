@@ -24,6 +24,12 @@ describe("buildAllPrompts", () => {
     expect(messages[0].content.text).toContain("invoices");
     expect(messages[0].content.text).toContain("User focus");
   });
+
+  it("points hosts at the advisory tax_rules resource", () => {
+    const { messages } = promptsRender({});
+    expect(messages[0].content.text).toContain("efinancials://tax_rules");
+    expect(messages[0].content.text).toContain("advisory");
+  });
 });
 
 function promptsRender(args: Record<string, string>) {

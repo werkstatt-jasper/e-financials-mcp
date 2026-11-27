@@ -301,11 +301,12 @@ The server advertises the tools listed in [Tools at a glance](#tools-at-a-glance
 
 ### Resources
 
-Static and templated resources use the **`efinancials://`** URI scheme.
+Static and templated resources use the **`efinancials://`** URI scheme. This scheme is the stable prefix for every resource this server advertises, including future company-data resources and URI templates.
 
 | URI | Description |
 |-----|-------------|
 | `efinancials://server_info` | Server name, version, and capability summary (JSON; no API call). |
+| `efinancials://tax_rules` | Advisory Estonian statutory tax-rules reference: VAT-rate timeline, reduced rates, deduction restrictions, and tax-free limits (JSON; no API call). Not a KMD/VAT-return generator or EMTA prepayment tool. |
 
 ## MCP tools reference
 

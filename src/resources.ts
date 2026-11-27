@@ -1,4 +1,11 @@
+import {
+  DEDUCTION_AND_LIMIT_RULES,
+  REDUCED_VAT_RATES,
+  STANDARD_VAT_RATE_TIMELINE,
+} from "./estonian-vat.js";
+
 export const EFINANCIALS_URI_SCHEME = "efinancials://";
+export const TAX_RULES_URI = `${EFINANCIALS_URI_SCHEME}tax_rules`;
 
 export type ResourceReadResult = {
   uri: string;
@@ -79,6 +86,27 @@ function buildServerInfoPayload(): ResourceReadResult {
   };
 }
 
+function buildTaxRulesPayload(): ResourceReadResult {
+  const payload = {
+    advisory: true,
+    uriScheme: EFINANCIALS_URI_SCHEME,
+    disclaimer:
+      "Advisory reference only, not legal or tax advice and not a live lookup. Confirm current rates and limits against the official texts (EMTA and Riigi Teataja) before booking. Figures are server-authored statutory reference data for grounding booking decisions.",
+    nonGoals: [
+      "Does not generate or file a KMD or any other VAT return.",
+      "Does not create EMTA prepayment entries. e-Financials already handles those natively; duplicating them risks double-booking.",
+    ],
+    standardVatRateTimeline: STANDARD_VAT_RATE_TIMELINE,
+    reducedVatRates: REDUCED_VAT_RATES,
+    deductionAndLimitRules: DEDUCTION_AND_LIMIT_RULES,
+  };
+  return {
+    uri: TAX_RULES_URI,
+    mimeType: "application/json",
+    text: JSON.stringify(payload, null, 2),
+  };
+}
+
 export function buildAllResources(): ResourceRegistry {
   return {
     resources: {
@@ -88,6 +116,14 @@ export function buildAllResources(): ResourceRegistry {
         description: "Server name, version, and capability summary (no API call).",
         mimeType: "application/json",
         read: buildServerInfoPayload,
+      },
+      tax_rules: {
+        uri: TAX_RULES_URI,
+        name: "tax_rules",
+        description:
+          "Advisory Estonian statutory tax-rules reference: VAT-rate timeline, reduced rates, deduction restrictions, and tax-free limits (JSON; no API call). Not a VAT-return or EMTA prepayment tool.",
+        mimeType: "application/json",
+        read: buildTaxRulesPayload,
       },
     },
     templates: {},
